@@ -24,9 +24,18 @@ rm -f /usr/lib/raspberrypi-sys-mods/firstboot 2>/dev/null || true
 # Allow apt to function without a correct system date
 echo "APT::Check-Date "false";" >  /etc/apt/apt.conf.d/99no-time-checks.conf
 
-# set up persistent logging, this is not working
+# Persistent systemd journal (Raspberry Pi OS ships /usr/lib/systemd/journald.conf.d/
+# 40-rpi-volatile-storage.conf with Storage=volatile; shadow the same filename in /etc.)
+mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+cat > /etc/systemd/journald.conf.d/40-rpi-volatile-storage.conf << 'JOURNALEOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=100M
+RuntimeMaxUse=50M
+JOURNALEOF
 chown root:systemd-journal /var/log/journal
 chmod 2755 /var/log/journal
+systemd-tmpfiles --create --prefix /var/log/journal 2>/dev/null || true
 systemctl restart systemd-journald
 
 

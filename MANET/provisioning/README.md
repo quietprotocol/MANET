@@ -155,9 +155,10 @@ Insert the storage media, connect Ethernet, and power on the node. What happens 
 The `firstrun.sh` script runs on the very first boot (injected by `rpi-imager`). It:
 
 1. Disables the default Raspberry Pi setup wizard
-2. Creates the `radio` user account
-3. Enables SSH
-4. Creates and enables a `mesh-provision` systemd service for the next stage
+2. Configures **persistent systemd journals** (overrides Raspberry Pi OS’s volatile default so `journalctl -b -1` works after reboots; see `docs/device-diagnostics-notes.md`)
+3. Creates the `radio` user account
+4. Enables SSH
+5. Creates and enables a `mesh-provision` systemd service for the next stage
 
 After a reboot, `provision-mesh.sh` runs once network is available. It:
 
