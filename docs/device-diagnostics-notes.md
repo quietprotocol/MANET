@@ -99,6 +99,10 @@ Field journals showed **`batman-enslave` failing** with **`/etc/default/mesh not
 
 Unclean power-downs still produce **journal corruption** lines on the next boot; that is separate from mesh config logic.
 
+## Network dies after ~1 minute
+
+See **[`network-drops-60s.md`](network-drops-60s.md)** — hardware watchdog vs PCIe Wi‑Fi vs empty mesh configs.
+
 ## Related repo paths
 
 - Provisioning scripts/docs: `MANET/provisioning/`
