@@ -863,9 +863,22 @@ fi
 echo ""
 echo "--- Image & Device ---"
 
-
-# Now that we know the hardware, acquire the appropriate image
-acquire_armbian_image
+# Now that we know the hardware, acquire the appropriate image.
+# Rock 3A uses Armbian; all Raspberry Pi variants use rpi-imager URL.
+case "$HARDWARE_MODEL" in
+        r3a)
+                acquire_armbian_image
+                echo "Using Rock 3A image: $ARMBIAN_IMAGE"
+                ;;
+        rpi4|rpi5)
+                echo "Using Raspberry Pi OS image URL (rpi-imager will download/cache it):"
+                echo "  $PI_OS_IMAGE_URL"
+                ;;
+        *)
+                echo "ERROR: Unknown hardware model '$HARDWARE_MODEL'"
+                exit 1
+                ;;
+esac
 
 
 # Rock3A provisioning section
