@@ -87,6 +87,18 @@ After that survives a **reboot**, `journalctl -b -1 -k` can show the **previous*
 - **Logs without network:** mount the SD card on a PC and copy **`var/log/journal/`** (if persistent journaling was working) or **`/boot/firmware/*.log`** and **`var/log/radio-setup.log`**.
 - If the journal was still **volatile**, the previous boot is **gone** unless you had **serial console** logging or **remote syslog**.
 
+## Mesh stack (symptoms vs fixes in-tree)
+
+Field journals showed **`batman-enslave` failing** with **`/etc/default/mesh not found`**, **`bat0` missing**, and **`node-manager`** editing **non-existent** `wpa_supplicant-wlan*.conf` when PCIe Wi‑Fi was flaky or still coming up.
+
+| Symptom | Cause | Change |
+|--------|--------|--------|
+| `Mesh configuration /etc/default/mesh not found` | File was only written **inside** the wlan loop; empty `mesh_if` → file never created | **`radio-setup.sh`** writes `/etc/default/mesh` as soon as **`MESH_NAME`** is set from `mesh.conf` |
+| `integer expression expected` on PHY wait | `grep -c` prints `0` with exit 1, then `|| echo 0` appended a second line | **`radio-setup.sh`** uses `grep -c … \|\| true` only |
+| `sed: can't read … wpa_supplicant-wlan0.conf` | Static/ACS node-manager assumed configs existed | **`node-manager-static.sh`** / **`node-manager-acs.sh`** skip `sed`/restarts if conf files are missing |
+
+Unclean power-downs still produce **journal corruption** lines on the next boot; that is separate from mesh config logic.
+
 ## Related repo paths
 
 - Provisioning scripts/docs: `MANET/provisioning/`

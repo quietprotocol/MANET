@@ -148,6 +148,10 @@ is_in_lobby() {
 }
 
 return_to_lobby() {
+    if [ ! -f "$WPA_CONF_2_4" ] || [ ! -f "$WPA_CONF_5_0" ]; then
+        log "Cannot return to lobby — missing wpa_supplicant conf (radio-setup / wlan not ready)"
+        return 1
+    fi
     log "Returning to lobby channels..."
     sed -i "s/frequency=.*/frequency=${LOBBY_FREQ_2_4}/" "$WPA_CONF_2_4"
     sed -i "s/frequency=.*/frequency=${LOBBY_FREQ_5_0}/" "$WPA_CONF_5_0"
@@ -337,12 +341,15 @@ while true; do
             if [[ -n "$DATA_CHANNEL_2_4" && -n "$DATA_CHANNEL_5_0" ]]; then
                 log "Helper beacon received. Migrating to data channels: 2.4=${DATA_CHANNEL_2_4}, 5=${DATA_CHANNEL_5_0}"
 
-                sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_2_4}/" "$WPA_CONF_2_4"
-                sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_5_0}/" "$WPA_CONF_5_0"
-
-                systemctl restart wpa_supplicant@wlan0.service
-                systemctl restart wpa_supplicant@wlan1.service
-                sleep 5
+                if [ -f "$WPA_CONF_2_4" ] && [ -f "$WPA_CONF_5_0" ]; then
+                    sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_2_4}/" "$WPA_CONF_2_4"
+                    sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_5_0}/" "$WPA_CONF_5_0"
+                    systemctl restart wpa_supplicant@wlan0.service
+                    systemctl restart wpa_supplicant@wlan1.service
+                    sleep 5
+                else
+                    log "Skipping channel migration — wpa_supplicant conf not present"
+                fi
             fi
         fi
 

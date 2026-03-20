@@ -102,6 +102,11 @@ get_current_freq() {
 }
 
 ensure_static_channels() {
+    if [ ! -f "$WPA_CONF_2_4" ] || [ ! -f "$WPA_CONF_5_0" ]; then
+        log "Skipping static channel correction — missing $WPA_CONF_2_4 or $WPA_CONF_5_0 (radio-setup / mesh interfaces not ready)"
+        return 0
+    fi
+
     local freq_2_4=$(get_current_freq "$WPA_CONF_2_4")
     local freq_5_0=$(get_current_freq "$WPA_CONF_5_0")
     

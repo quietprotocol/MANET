@@ -108,6 +108,14 @@ fi
 
 sleep 2
 
+# batman-if-setup.sh and batman-enslave.service source this file. It must exist as
+# soon as the mesh SSID is known — not only after wlan interfaces are enumerated.
+# If WiFi is down or mesh_if is empty, the wlan loop below never runs; without this,
+# batman-enslave fails with "Mesh configuration /etc/default/mesh not found".
+if [[ -n "${MESH_NAME:-}" ]]; then
+    echo "MESH_NAME=\"$MESH_NAME\"" > /etc/default/mesh
+fi
+
 #
 # Finish setting up network devices (wireless)
 #
@@ -145,9 +153,11 @@ DRIVER_WAIT_COUNT=0
 MAX_DRIVER_WAIT=30  # 60 seconds total
 
 while [ $DRIVER_WAIT_COUNT -lt $MAX_DRIVER_WAIT ]; do
-    PHY_COUNT=$(iw dev 2>/dev/null | grep -c "^phy#" || echo "0")
+    # grep -c prints 0 and exits 1 when there are no matches; do not append "0" or
+    # PHY_COUNT becomes two lines and [ ] integer tests break.
+    PHY_COUNT=$(iw dev 2>/dev/null | grep -c "^phy#" || true)
 
-    if [ "$PHY_COUNT" -gt 0 ]; then
+    if [ "${PHY_COUNT:-0}" -gt 0 ]; then
         echo "✓ Found $PHY_COUNT wireless PHY(s)"
         break
     fi
@@ -162,7 +172,7 @@ while [ $DRIVER_WAIT_COUNT -lt $MAX_DRIVER_WAIT ]; do
     ((DRIVER_WAIT_COUNT++))
 done
 
-if [ "$PHY_COUNT" -eq 0 ]; then
+if [ "${PHY_COUNT:-0}" -eq 0 ]; then
     echo "⚠ WARNING: No wireless interfaces found after $((MAX_DRIVER_WAIT * 2)) seconds"
     echo "  This is normal for wired-only configurations"
     echo "  If you expect wireless: check 'dmesg | grep -i firmware'"
@@ -304,7 +314,7 @@ for WLAN in $(cat /var/lib/mesh_if); do
     fi
 
     echo " > Setting SAE key/SSID for $WLAN ..."
-    echo "MESH_NAME=\"$MESH_NAME\"" > /etc/default/mesh
+    # /etc/default/mesh already written early when MESH_NAME was set
 
 cat <<-EOF > /etc/wpa_supplicant/wpa_supplicant-$WLAN-lobby.conf
 ctrl_interface=/var/run/wpa_supplicant
