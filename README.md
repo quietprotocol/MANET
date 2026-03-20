@@ -24,6 +24,7 @@ The project transforms hardware like the Raspberry Pi CM4 into self-forming, sel
 
 ## Repository Structure
 
+* **`docs/`**: Field notes and diagnostics references — see [`docs/device-diagnostics-notes.md`](docs/device-diagnostics-notes.md) for CM4 Wi‑Fi / provisioning troubleshooting from bench sessions.
 * **`provisioning/`**: Scripts and templates for flashing the OS image.
 * **`node_tools/`**: The runtime logic for the node. Contains the scripts that run the mesh, including:
     * `node-manager`: The core orchestrator for cooperative mesh functions.

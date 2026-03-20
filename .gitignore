@@ -1,2 +1,5 @@
 *.img
 *.deb
+
+# Ephemeral kernel log grabs from devices (see docs/device-diagnostics-notes.md)
+docs/kernel-log-snapshot.txt
