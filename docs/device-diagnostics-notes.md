@@ -2,9 +2,49 @@
 
 Reference for future sessions. Last updated from checks against a **Raspberry Pi Compute Module 4 Rev 1.1** mesh image (Mar 2026).
 
+### Current bench profile (read this first)
+
+Recent CM4 bench nodes target **mesh backhaul on PCIe M.2 only** (**[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** + [AliExpress M.2 adapter](https://www.aliexpress.com/item/4000175123887.html?spm=a2g0o.order_list.order_list_main.66.787318027rHYJu) in [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) **M-key** slot): **`dtoverlay=disable-wifi`** (onboard SDIO Wi-Fi off), **Morse SPI / HaLow and camera autoload off** in `config.txt`, and **Morse modules blacklisted** where applied. On that profile, **skip `mmc1` / `brcmfmac` / CM4 U.FL** troubleshooting unless you re-enable onboard Wi-Fi.
+
 ## Hardware assumptions
 
-- **Morse HaLow (802.11ah) is not connected.** Kernel messages such as `morse_spi_probe: failed to init SPI with CMD63` / probe **-61** are **expected** when no Morse module is present on SPI. Do not treat those as a regression unless a HaLow board is actually installed.
+- **Morse HaLow (802.11ah):** On Morse-oriented images with **no module on SPI**, `morse_spi_probe …` **-61** is **expected** noise. If Morse is **disabled in firmware** and **blacklisted**, those lines may **not appear**.
+
+### Reference module SKU
+
+Bench notes match **CM4108032** ([Raspberry Pi product listing](https://www.raspberrypi.com/products/compute-module-4/?variant=raspberry-pi-cm4108032)): **8GB RAM**, **32GB eMMC**, **onboard 2.4 / 5 GHz Wi‑Fi (802.11ac)** and **Bluetooth 5.0** (hardware present). **When onboard Wi-Fi is enabled in device-tree** (`disable-wifi` **not** set), **`mmc1` + `brcmfmac` + SDIO `wlan*` are expected** if wiring and antenna are correct — do not dismiss missing onboard `wlan*` as "CM4 without wireless." With **`disable-wifi`**, no SDIO `wlan*` is **intentional**. Part-number decoding (**CM4** / **1**=wireless / **08**=8GB / **032**=32GB eMMC) matches Table 9–10 in the [CM4 datasheet PDF](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf).
+
+### CM4 datasheet (official)
+
+**[Compute Module 4 datasheet (PDF)](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf)** — use for pinout, RF, and PCIe rules. Diagnostics-oriented excerpts:
+
+- **Onboard vs external antenna:** The module can use a **PCB trace antenna** or a **U.FL** external antenna; selection is **fixed at boot** via `config.txt`: **`dtparam=ant1`** (internal) or **`dtparam=ant2`** (external). Wrong choice for how the hardware is actually wired can make Wi‑Fi look dead or very weak.
+- **`WL_nDisable` / `BT_nDisable`:** If a carrier ties either **low**, the respective radio is **held off** (datasheet §2.1.1–2.1.2). **Floating** is OK (internal pull-ups). Suspect the base board if SDIO Wi‑Fi never powers but Bluetooth paths behave oddly.
+- **PCIe (Gen 2 ×1):** Follow **clock request** and **reset** wiring on custom designs; on a commercial IO board this is already handled. If a device misbehaves on interrupts, the datasheet notes **`pci=nomsi`** on the kernel command line as a common experiment (§2.3).
+- **Mechanical / RF:** On-board antenna needs **clearance** from metal / ground fill (datasheet §3.1); poor enclosure layout hurts 2.4 GHz especially. Prefer **certified antenna kits** if you are not reusing Pi’s own RF layout.
+- **Power:** **+5 V** should stay **≥4.75 V** under load; typical operating current order of **~1.4 A** cited in the doc — relevant when **USB + M.2 + radios** stack on a **5 V / 2.5 A** class adapter (see carrier notes below).
+
+### Reference carrier board
+
+**[Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm)** (“Mini Base Board B”): **M.2 M key** slot (per Waveshare: NVMe **or** PCIe **M-key** communication modules), **Gigabit Ethernet**, **5 V** power input (their docs specify **5 V / 2.5 A** class supply for the board). **RTC** and fan header are on-board; the CM4 itself is not included.
+
+Diagnostics-relevant notes:
+
+- **PCIe Wi‑Fi (`mt7915e`)** rides the **M.2 M-key** link documented for that slot — same **power, mechanical, and thermal** caveats as any M.2 NIC on a small 5 V carrier (reseating, **adequate PSU**, **cold** power cycle if the link wedges).
+- **Onboard CM4 Wi‑Fi / BT** use the **CM4’s own** u.FL / antenna arrangement, not the M.2 slot. Waveshare’s kit photos note **antennas are not included**; with **CM4108032** you still need **proper 2.4/5 GHz (and BT if split) antennas** connected per the CM4 mechanical setup, or performance may be poor and bring-up can look “dead.”
+- **M.2 vs NVMe:** If the slot is populated with a **Wi‑Fi module**, it is **not** available for NVMe at the same time — only one M-key device.
+
+### M.2 Wi‑Fi module (524WiFi AW7916-AED)
+
+Mesh nodes here use **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** (**MediaTek MT7916AN**), marketed as **Wi‑Fi 6E AX3000**, **DBDC** (2.4 GHz + 5/6 GHz), **two IPEX antenna ports**, **PCIe 2.1** device. Vendor documentation points at the **Linux `mt76` / `mt7915e`** stack ([OpenWrt `mt7915` tree reference](https://github.com/openwrt/mt76/tree/master/mt7915) as cited on their product page).
+
+**Power (from vendor spec):** up to **~8 W** peak, **~5 W** typical; they ask board designers for **3.3 V @ 3.5 A** (minimum **3 A**) to the module. On CM4 + IO boards, kernel logs often show **PCIe 3.3 V regulators as “dummy”** — if the **M.2 3.3 V rail sags** under this load (especially with **USB, CM4, and second radio**), expect **probe timeouts (-110)**, **ENOMEM (-12)**-style failures, or **intermittent** `mt7915e` bring-up. **Heatsink** (vendor ships **30×30×10 mm** option) matters for sustained power.
+
+**M.2 keying:** The listing specifies **M.2 A+E key** (typical laptop Wi‑Fi). The [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) documents an **M key** slot — only use combinations that are **electrically and mechanically valid** (correct adapter, correct module variant, or a carrier that matches the module key).
+
+**M.2 adapter (A+E → M-key socket):** Field build uses this **AliExpress** board: [item `4000175123887`](https://www.aliexpress.com/item/4000175123887.html?spm=a2g0o.order_list.order_list_main.66.787318027rHYJu) (confirm pinout/keying on the seller page). Adapters like this are a common way to fit **laptop-style Wi‑Fi modules** into **M-key PCIe** slots; quality varies — **3.3 V path, ground return, and connector wear** can contribute to **intermittent `mt7915e` probe (-110 / -12)** even when the **AW7916-AED** module itself is fine. Reseat adapter **and** module, and compare with a **known-good direct-fit** setup if problems persist.
+
+**PCI ID on bench images:** `lspci` has shown **`14c3:7906`** with driver **`mt7915e`** — treat as **MediaTek Filogic / mt76 family**; marketing “7916” vs PCI **7906** naming can differ by stepping/SKU.
 
 ## Access
 
@@ -44,19 +84,69 @@ lsusb                      # USB Wi‑Fi
 
 | Component | Observation |
 |-----------|----------------|
-| **PCIe Wi‑Fi** | `lspci`: **MediaTek 14c3:7906** (MT7915/7916 family). Driver **`mt7915e`** loads firmware, then **probe fails**: `Message 000101ed (seq 4) timeout` → **error -110 (ETIMEDOUT)**. **No `wlan` interface** created. |
-| **Built-in Wi‑Fi** | **No `brcmfmac`** in use, no `wlan*` in `/sys/class/net`. Consistent with **CM4 without wireless** or Wi‑Fi not enabled — do not assume internal 802.11 until `brcmfmac` + `wlan0` appear in `dmesg`/`iw dev`. |
+| **PCIe Wi‑Fi** | Module: **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** (MT7916AN). `lspci`: **14c3:7906**, driver **`mt7915e`**. Observed failures: **`Message 000101ed` timeout → -110**, or **probe -12 (ENOMEM)** on some boots — power / DMA / thermal / firmware. |
+| **Built-in Wi‑Fi** | **No `brcmfmac`** / no SDIO **`wlan*`** is **expected** if **`dtoverlay=disable-wifi`** (M.2-only bench profile). If onboard Wi‑Fi **is** enabled and still missing on **CM4108032**, treat as **SDIO / DT / antenna / carrier** — not a wireless-less SKU mistake. |
 | **Morse HaLow** | Driver may log SPI probe failures; **ignore for bench diagnosis** when no HaLow hardware is connected (see above). |
 
-## Useful follow-ups when PCIe Wi‑Fi times out
+### Bench update: U.FL / IPEX antenna (CM4108032 — onboard Wi‑Fi only)
 
-- Reseat module, cold power cycle, carrier-specific PCIe power/reset notes.
-- After boot: `dmesg | grep -E 'mt7915|7915|7906'` and compare firmware filenames (`modinfo mt7915e`) vs vendor expectations.
+**Applies only when onboard SDIO Wi‑Fi is enabled** (no `disable-wifi`). Skip if you use **M.2-only** mesh.
+
+**What changed:** The CM4 wireless SKU exposes a small **U.FL** connector (often labeled **IPEX** / **IPX**). Kits like the [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) typically **do not ship** an antenna. With **no antenna** (or a wrong-band stub), the CYW43455 path can show as **no usable `wlan`**, flaky **SDIO/`mmc1`**, or **very weak** link — not necessarily a dead module. **Fitting a proper dual-band 2.4/5 GHz antenna** on that connector is required for normal RF.
+
+**Firmware alignment:** The CM4 selects **internal PCB vs external U.FL** at boot via `config.txt` (**`dtparam=ant1`** vs **`dtparam=ant2`**); see the [CM4 datasheet §2.1](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf). If you **only** use the pigtail antenna, prefer **`ant2`** so the RF switch matches the hardware.
+
+**Confirm “up” isn’t cosmetic:**
+
+```bash
+export PATH="/usr/sbin:/sbin:$PATH"
+iw dev
+iw phy phy0 info 2>/dev/null | head -20   # adjust phy# if needed
+ip -br link | grep wlan
+sudo iw dev wlan0 scan | head -40         # APs visible = RX path plausible
+```
+
+Check **`/boot/firmware/config.txt`** (or overlay snippets) for **`ant1`/`ant2`**. PCIe **M.2** Wi‑Fi (`mt7915e`) remains a **separate** interface if present — use **`iw dev`** and **`lspci`** to see **both** radios.
+
+## Hardware isolation (do this before blaming mesh scripts)
+
+Treat **three independent paths**; only one needs to work for a useful bench node, but you must know **which** you have.
+
+| Path | What “good” looks like | Typical failure |
+|------|-------------------------|-----------------|
+| **Onboard CM4 wireless** | `brcmfmac` loaded, `mmc1` brings up SDIO, `wlan0` (or similar) from Broadcom | **`disable-wifi` set** → path intentionally off; ignore. On **wireless-less** CM4 SKUs, `mmc1` failure is often **expected**. On **CM4108032** with onboard Wi‑Fi **enabled**, **`mmc1` failure + no `brcmfmac` is a bug to fix** (hardware, antenna, DT). |
+| **PCIe NIC (AW7916-AED / 14c3:7906 / `mt7915e`)** | `lspci` sees device, `dmesg` completes probe, **`iw dev`** shows an interface | **-110** / **-12**: NIC, **M.2 3.3 V current**, slot, thermal, firmware — see [524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/) power notes |
+| **Morse HaLow** | Only relevant if the module is wired; **-61 on SPI** with no hardware is noise | — |
+
+### What the local `kernel-log-snapshot.txt` actually shows
+
+That file is a **slice** of one boot (see `.gitignore` — optional local copy). On **mesh-582a** it includes:
+
+- **PCIe**: `brcm-pcie … link up, 5.0 GT/s PCIe x1`; device **`[14c3:7906]`** enumerated — the **physical link and enumeration are OK** on that boot.
+- **`mt7915e`**: Driver enables the device, disables ASPM, prints HW/SW and WM/WA firmware lines — then the **saved log ends** (Ethernet link-up). It does **not** include a later **-110** or `wlan` registration, so it **neither proves the NIC good nor bad**; you need **`journalctl -k -b 0` / `dmesg` through the full `mt7915e` probe**.
+
+If firmware lines look like placeholders (`____000000` / `DEV_000000`), still read the **next** kernel lines: either **`wlan` appears** (likely fine) or **timeout / probe failed** (focus on NIC + power + firmware).
+
+- **`mmc1: Failed to initialize a non-removable card`**: With **`disable-wifi`**, ignore for mesh (onboard path disabled). Otherwise on **CM4108032**, pair with **`brcmfmac`** / **`dmesg | grep -i brcmf`** — onboard Wi‑Fi block did not come up; fix **SDIO / antenna / DT** if you need that radio.
+
+### Bench order (fastest discrimination)
+
+1. **CM4 SKU / onboard radio** — **CM4108032** includes SDIO Wi‑Fi hardware; with **`disable-wifi`**, ignore SDIO for mesh. If your module is **without** wireless, `mmc1` / no internal `wlan` can be **expected**, and **PCIe or USB** must supply Wi‑Fi.
+2. **PCIe mechanical / power** — Reseat the M.2 (or adapter), **cold** power-off 30s, try another **carrier** if available. Undersized PSU can show as **link drops** or **probe timeouts** under load (see [`network-drops-60s.md`](network-drops-60s.md)).
+3. **Swap the NIC** — Same 7906-class module in **another** Linux host vs **another** known-good PCIe Wi‑Fi card in this CM4 isolates **module vs slot vs CM4**.
+4. **Software contrast (one boot)** — Boot a **plain Raspberry Pi OS** (same kernel family if possible) and capture **`dmesg | grep -iE 'mt79|7915|7906|pcie'`**. If **Pi OS works** but the mesh image fails, suspect **firmware blobs, module blacklist, or init timing**; if **both fail**, weight **hardware / power** higher.
+5. **Full failure capture** — Save complete probe output:  
+   `dmesg -T > /tmp/dmesg.txt` immediately after boot (or persistent journal and `journalctl -k -b -1` after a failed boot).
+
+### Useful follow-ups when PCIe Wi‑Fi times out (-110)
+
+- Reseat module, cold power cycle, carrier-specific PCIe **3.3 V / enable / reset** notes.
+- `dmesg | grep -E 'mt7915|7915|7906'` and compare loaded firmware files (`modinfo mt7915e`) to what the vendor/kernel expects.
 - **Security:** provisioning logs may contain mesh/AP keys — rotate if logs are shared.
 
 ## Kernel log snapshot (grabbed from device)
 
-- **`kernel-log-snapshot.txt`** — optional local copy of `journalctl -k -b 0` (not committed; listed in `.gitignore`). Regenerate after incidents if you keep a copy beside this doc.
+- **`kernel-log-snapshot.txt`** — optional **local** copy of `journalctl -k -b 0` (gitignored by default). Regenerate after incidents; keep a **full** capture when isolating **-110** (see above).
 
 ### Previous boot (`journalctl -b -1 -k`)
 

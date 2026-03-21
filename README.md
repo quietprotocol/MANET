@@ -77,3 +77,5 @@ The nodes support connecting external devices (End User Devices) in three ways:
 * [Provisioning Guide](MANET/provisioning/README.md)
 * [Node Tools Documentation](MANET/node_tools/README.md)
 * [Binary Details](MANET/binaries_arm64/README.md)
+* [CM4 / Wi‑Fi diagnostics (field notes)](docs/device-diagnostics-notes.md)
+* [~60s dropouts: watchdog vs radio](docs/network-drops-60s.md)
