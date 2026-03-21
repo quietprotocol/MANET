@@ -142,7 +142,16 @@ If firmware lines look like placeholders (`____000000` / `DEV_000000`), still re
 
 - Reseat module, cold power cycle, carrier-specific PCIe **3.3 V / enable / reset** notes.
 - `dmesg | grep -E 'mt7915|7915|7906'` and compare loaded firmware files (`modinfo mt7915e`) to what the vendor/kernel expects.
+- **`pci=nomsi`** on the kernel command line (`/boot/firmware/cmdline.txt`): [CM4 datasheet §2.3](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf) notes this when PCIe devices misbehave on **MSI**; try if you see **`mt7915e` timeouts** together with IRQ issues below.
 - **Security:** provisioning logs may contain mesh/AP keys — rotate if logs are shared.
+
+### PCIe IRQ #26 / AER vs `mt7915e` probe (-110)
+
+On a **bad** boot, `dmesg` can show **`irq 26: nobody cared`** on **CM4**, with handlers listed as **`pcie_pme_irq`** and **`aer_irq`** (PCIe **Advanced Error Reporting** on the root port), followed by **`Disabling IRQ #26`**. That line is shared with the **M.2** device under the BCM2711 bridge — once the kernel **disables** it, **`mt7915e` firmware messaging** often **times out** (`Message 000101ed …`, **-110**). **Bluetooth** (`hci0`) may also log **-110** in the same window.
+
+**Mitigations to try (in order):** (1) **`pci=nomsi`** in `cmdline.txt` and reboot; (2) **`irqpoll`** on the command line for a **diagnostic** boot only (high overhead — confirms spurious/unhandled IRQ theory); (3) **hardware**: cold cycle, **M.2 + adapter reseat**, **PSU / 3.3 V** margin per [AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/) notes.
+
+**Unclean shutdown:** journal files may log **corrupted or uncleanly shut down** after watchdog or power loss — use persistent journal + `journalctl -k -b -1` when available (see below).
 
 ## Kernel log snapshot (grabbed from device)
 

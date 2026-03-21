@@ -30,7 +30,7 @@ Revert by removing that drop-in and `daemon-reload` + reboot.
 
 ## Mitigation B — PCIe Wi‑Fi (`mt7915e`)
 
-You’ve seen **`probe failed error -110`** (firmware talk timeout) and sometimes **`-12` (ENOMEM)** during probe. **Full power-off** (not soft reboot) often recovers. For development: **reseating** the **module and M.2 adapter**, **3.3 V / PSU headroom** (see [AW7916-AED power notes](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)), **heatsink**, and **kernel/firmware** updates. Details: [`device-diagnostics-notes.md`](device-diagnostics-notes.md).
+You’ve seen **`probe failed error -110`** (firmware talk timeout) and sometimes **`-12` (ENOMEM)** during probe. **`dmesg`** may show **`irq 26: nobody cared`** / **`Disabling IRQ #26`** (PCIe **AER** on CM4) right before **`mt7915e` fails** — try **`pci=nomsi`** in `/boot/firmware/cmdline.txt` (see [`device-diagnostics-notes.md`](device-diagnostics-notes.md)). **Full power-off** (not soft reboot) often recovers. For development: **reseating** the **module and M.2 adapter**, **3.3 V / PSU headroom** (see [AW7916-AED power notes](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)), **heatsink**, and **kernel/firmware** updates.
 
 ## Mitigation C — empty / broken mesh files
 
