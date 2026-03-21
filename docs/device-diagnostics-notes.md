@@ -2,6 +2,126 @@
 
 Reference for future sessions. Last updated from checks against a **Raspberry Pi Compute Module 4 Rev 1.1** mesh image (Mar 2026).
 
+<!-- markdownlint-disable MD051 --><!-- TOC fragment IDs match github.com heading anchors -->
+
+## Table of contents
+
+- [Overview](#overview)
+  - [Purpose](#purpose)
+  - [How to read this document](#how-to-read-this-document)
+- [Hardware](#hardware)
+  - [Morse HaLow (802.11ah)](#morse-halow-80211ah)
+  - [Reference module SKU](#reference-module-sku)
+  - [CM4 datasheet (official)](#cm4-datasheet-official)
+  - [Reference carrier board](#reference-carrier-board)
+  - [M.2 Wi‑Fi module (524WiFi AW7916-AED)](#m2-wi%E2%80%91fi-module-524wifi-aw7916-aed)
+- [Boot configuration (bench)](#boot-configuration-bench)
+  - [Current bench profile (read this first)](#current-bench-profile-read-this-first)
+  - [CM4 M.2 bench (config.txt and cmdline.txt reference)](#cm4-m2-bench-configtxt-and-cmdlinetxt-reference)
+  - [Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled](#verifying-onboard-cm4-wi%E2%80%91fi--bluetooth-are-disabled)
+    - [What “disabled” should look like](#what-disabled-should-look-like)
+    - [Quick manual check](#quick-manual-check)
+- [Problem statement: symptoms and failure modes](#problem-statement-symptoms-and-failure-modes)
+  - [What we saw on the reference unit (Wi‑Fi)](#what-we-saw-on-the-reference-unit-wi%E2%80%91fi)
+- [Hypotheses, isolation, and mitigations](#hypotheses-isolation-and-mitigations)
+  - [What the local `kernel-log-snapshot.txt` actually shows](#what-the-local-kernel-log-snapshottxt-actually-shows)
+  - [Bench order (fastest discrimination)](#bench-order-fastest-discrimination)
+  - [Useful follow-ups when PCIe Wi‑Fi times out (-110)](#useful-follow-ups-when-pcie-wi%E2%80%91fi-times-out--110)
+  - [PCIe IRQ #26 / AER vs `mt7915e` probe (-110)](#pcie-irq-%2326--aer-vs-mt7915e-probe--110)
+- [Diagnostics](#diagnostics)
+  - [Access](#access)
+  - [One-shot diagnostics (canonical)](#one-shot-diagnostics-canonical)
+  - [Pre-crash snapshot (under load)](#pre-crash-snapshot-under-load)
+  - [Provisioning logs (typical locations)](#provisioning-logs-typical-locations)
+  - [How to check Wi‑Fi radios (optional extras)](#how-to-check-wi%E2%80%91fi-radios-optional-extras)
+  - [Kernel log snapshot (grabbed from device)](#kernel-log-snapshot-grabbed-from-device)
+    - [Previous boot (`journalctl -b -1 -k`)](#previous-boot-journalctl--b--1--k)
+- [Operational tuning: lowering M.2 Wi‑Fi power (`mt7915e` / AW7916)](#operational-tuning-lowering-m2-wi%E2%80%91fi-power-mt7915e--aw7916)
+  - [What works](#what-works)
+  - [What to avoid on mesh backhaul](#what-to-avoid-on-mesh-backhaul)
+  - [What is not really tunable from userspace](#what-is-not-really-tunable-from-userspace)
+  - [Making TX caps persistent](#making-tx-caps-persistent)
+- [Bench update: U.FL / IPEX antenna (CM4108032 — onboard Wi‑Fi only)](#bench-update-ufl--ipex-antenna-cm4108032--onboard-wi%E2%80%91fi-only)
+- [Capturing reset cause — phased plan (UART + optional ramoops)](#capturing-reset-cause--phased-plan-uart--optional-ramoops)
+  - [Phase 0 — Hardware (before first power-on with UART)](#phase-0--hardware-before-first-power-on-with-uart)
+  - [Phase 1 — Host PC: capture a full session](#phase-1--host-pc-capture-a-full-session)
+  - [Phase 2 — What to look for in the log (“smoking gun” patterns)](#phase-2--what-to-look-for-in-the-log-smoking-gun-patterns)
+  - [Phase 3 — `ramoops` + `pstore` (no UART required)](#phase-3--ramoops--pstore-no-uart-required)
+  - [Example capture (bench): `Asynchronous SError` during `mt7915_init_work`](#example-capture-bench-asynchronous-serror-during-mt7915_init_work)
+  - [Phase 4 — Debug-only watchdog relaxation](#phase-4--debug-only-watchdog-relaxation)
+  - [When the node is down (no SSH)](#when-the-node-is-down-no-ssh)
+- [Mesh stack (symptoms vs fixes in-tree)](#mesh-stack-symptoms-vs-fixes-in-tree)
+- [Network dies after ~1 minute](#network-dies-after-1-minute)
+- [Related repo paths](#related-repo-paths)
+
+<!-- markdownlint-enable MD051 -->
+
+## Overview
+
+### Purpose
+
+This note ties **bench hardware** (CM4 + Waveshare carrier + **524WiFi AW7916-AED** / **`mt7915e`**) to **observed failure modes** (PCIe probe **-110**, **IRQ #26 / AER**, **SError** panics, unclean shutdowns) and to **actionable diagnostics** (scripts, journal, UART, **ramoops**). It is **not** a substitute for [`network-drops-60s.md`](network-drops-60s.md) (watchdog vs radio timeline) or the MANET provisioning README — cross-links are at the end.
+
+### How to read this document
+
+1. **Hardware** — SKU, carrier, M.2 module, power/keying; know which RF path you use (**M.2-only** vs onboard SDIO).
+2. **Boot configuration (bench)** — `config.txt` / `cmdline.txt` overlays; confirm **onboard Wi‑Fi/BT** are intentionally off if you use **M.2-only** mesh.
+3. **Problem statement** — Symptoms and failure modes to recognize (including **reference unit** observations).
+4. **Hypotheses and isolation** — Three independent RF/PCIe paths, **bench order**, **-110** follow-ups, **IRQ #26 / AER** vs **`mt7915e`**.
+5. **Diagnostics** — SSH access, **`mesh-node-diagnostics.sh`** / **`pre-crash-snapshot.sh`**, provisioning logs, **persistent journal**.
+6. **Operational tuning** — **TX power** caps on **`mt7915e`** (mesh vs AP).
+7. **Onboard Wi‑Fi antenna (U.FL)** — Only if **`disable-wifi` is *not* set**; skip for M.2-only bench.
+8. **Reset and crash capture** — UART phases, **ramoops** / **pstore**, example **SError** trace.
+9. **Mesh stack (in-tree)** — Symptoms vs fixes when PCIe Wi‑Fi is **late** or missing.
+
+---
+
+## Hardware
+
+### Morse HaLow (802.11ah)
+
+On Morse-oriented images with **no module on SPI**, `morse_spi_probe …` **-61** is **expected** noise. If Morse is **disabled in firmware** and **blacklisted**, those lines may **not appear**.
+
+### Reference module SKU
+
+Bench notes match **CM4108032** ([Raspberry Pi product listing](https://www.raspberrypi.com/products/compute-module-4/?variant=raspberry-pi-cm4108032)): **8GB RAM**, **32GB eMMC**, **onboard 2.4 / 5 GHz Wi‑Fi (802.11ac)** and **Bluetooth 5.0** (hardware present). **When onboard Wi-Fi is enabled in device-tree** (`disable-wifi` **not** set), **`mmc1` + `brcmfmac` + SDIO `wlan*` are expected** if wiring and antenna are correct — do not dismiss missing onboard `wlan*` as "CM4 without wireless." With **`disable-wifi`**, no SDIO `wlan*` is **intentional**. Part-number decoding (**CM4** / **1**=wireless / **08**=8GB / **032**=32GB eMMC) matches Table 9–10 in the [CM4 datasheet PDF](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf).
+
+### CM4 datasheet (official)
+
+**[Compute Module 4 datasheet (PDF)](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf)** — use for pinout, RF, and PCIe rules. Diagnostics-oriented excerpts:
+
+- **Onboard vs external antenna:** The module can use a **PCB trace antenna** or a **U.FL** external antenna; selection is **fixed at boot** via `config.txt`: **`dtparam=ant1`** (internal) or **`dtparam=ant2`** (external). Wrong choice for how the hardware is actually wired can make Wi‑Fi look dead or very weak.
+- **`WL_nDisable` / `BT_nDisable`:** If a carrier ties either **low**, the respective radio is **held off** (datasheet §2.1.1–2.1.2). **Floating** is OK (internal pull-ups). Suspect the base board if SDIO Wi‑Fi never powers but Bluetooth paths behave oddly.
+- **PCIe (Gen 2 ×1):** Follow **clock request** and **reset** wiring on custom designs; on a commercial IO board this is already handled. If a device misbehaves on interrupts, the datasheet notes **`pci=nomsi`** on the kernel command line as a common experiment (§2.3).
+- **Mechanical / RF:** On-board antenna needs **clearance** from metal / ground fill (datasheet §3.1); poor enclosure layout hurts 2.4 GHz especially. Prefer **certified antenna kits** if you are not reusing Pi’s own RF layout.
+- **Power:** **+5 V** should stay **≥4.75 V** under load; typical operating current order of **~1.4 A** cited in the doc — relevant when **USB + M.2 + radios** stack on a **5 V / 2.5 A** class adapter (see carrier notes below).
+
+### Reference carrier board
+
+**[Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm)** (“Mini Base Board B”): **M.2 M key** slot (per Waveshare: NVMe **or** PCIe **M-key** communication modules), **Gigabit Ethernet**, **5 V** power input (their docs specify **5 V / 2.5 A** class supply for the board). **RTC** and fan header are on-board; the CM4 itself is not included.
+
+Diagnostics-relevant notes:
+
+- **PCIe Wi‑Fi (`mt7915e`)** rides the **M.2 M-key** link documented for that slot — same **power, mechanical, and thermal** caveats as any M.2 NIC on a small 5 V carrier (reseating, **adequate PSU**, **cold** power cycle if the link wedges).
+- **Onboard CM4 Wi‑Fi / BT** use the **CM4’s own** u.FL / antenna arrangement, not the M.2 slot. Waveshare’s kit photos note **antennas are not included**; with **CM4108032** you still need **proper 2.4/5 GHz (and BT if split) antennas** connected per the CM4 mechanical setup, or performance may be poor and bring-up can look “dead.”
+- **M.2 vs NVMe:** If the slot is populated with a **Wi‑Fi module**, it is **not** available for NVMe at the same time — only one M-key device.
+
+### M.2 Wi‑Fi module (524WiFi AW7916-AED)
+
+Mesh nodes here use **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** (**MediaTek MT7916AN**), marketed as **Wi‑Fi 6E AX3000**, **DBDC** (2.4 GHz + 5/6 GHz), **two IPEX antenna ports**, **PCIe 2.1** device. Vendor documentation points at the **Linux `mt76` / `mt7915e`** stack ([OpenWrt `mt7915` tree reference](https://github.com/openwrt/mt76/tree/master/mt7915) as cited on their product page).
+
+**Power (from vendor spec):** up to **~8 W** peak, **~5 W** typical; they ask board designers for **3.3 V @ 3.5 A** (minimum **3 A**) to the module. On CM4 + IO boards, kernel logs often show **PCIe 3.3 V regulators as “dummy”** — if the **M.2 3.3 V rail sags** under this load (especially with **USB, CM4, and second radio**), expect **probe timeouts (-110)**, **ENOMEM (-12)**-style failures, or **intermittent** `mt7915e` bring-up. **Heatsink** (vendor ships **30×30×10 mm** option) matters for sustained power.
+
+**M.2 keying:** The listing specifies **M.2 A+E key** (typical laptop Wi‑Fi). The [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) documents an **M key** slot — only use combinations that are **electrically and mechanically valid** (correct adapter, correct module variant, or a carrier that matches the module key).
+
+**M.2 adapter (A+E → M-key socket):** Field build uses this **AliExpress** board: [item `4000175123887`](https://www.aliexpress.com/item/4000175123887.html?spm=a2g0o.order_list.order_list_main.66.787318027rHYJu) (confirm pinout/keying on the seller page). Adapters like this are a common way to fit **laptop-style Wi‑Fi modules** into **M-key PCIe** slots; quality varies — **3.3 V path, ground return, and connector wear** can contribute to **intermittent `mt7915e` probe (-110 / -12)** even when the **AW7916-AED** module itself is fine. Reseat adapter **and** module, and compare with a **known-good direct-fit** setup if problems persist.
+
+**PCI ID on bench images:** `lspci` has shown **`14c3:7906`** with driver **`mt7915e`** — treat as **MediaTek Filogic / mt76 family**; marketing “7916” vs PCI **7906** naming can differ by stepping/SKU.
+
+---
+
+## Boot configuration (bench)
+
 ### Current bench profile (read this first)
 
 Recent CM4 bench nodes target **mesh backhaul on PCIe M.2 only** (**[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** + [AliExpress M.2 adapter](https://www.aliexpress.com/item/4000175123887.html?spm=a2g0o.order_list.order_list_main.66.787318027rHYJu) in [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) **M-key** slot): **`dtoverlay=disable-wifi`** (onboard SDIO Wi-Fi off), **Morse SPI / HaLow and camera autoload off** in `config.txt`, and **Morse modules blacklisted** where applied. On that profile, **skip `mmc1` / `brcmfmac` / CM4 U.FL** troubleshooting unless you re-enable onboard Wi-Fi. **Copy-paste overlays and `cmdline` tokens** for this profile are in the next subsection.
@@ -42,47 +162,112 @@ dtoverlay=ramoops,total-size=0x100000
 
 **Also on bench images (not duplicated as overlays above):** comment out or omit **Morse / HaLow / camera** `dtoverlay` lines shipped by the MANET tarball when you run **M.2-only** — use the same **`grep`** patterns as [`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh) (`morse`, `mm610`, `spi`, `camera`, `sdio`). **`dtparam=ant1`** / **`ant2`** only affect **onboard** CM4 RF when SDIO Wi‑Fi is enabled; with **`disable-wifi`**, they are usually irrelevant for the **PCIe** `wlan*` mesh path.
 
-## Hardware assumptions
+### Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled
 
-- **Morse HaLow (802.11ah):** On Morse-oriented images with **no module on SPI**, `morse_spi_probe …` **-61** is **expected** noise. If Morse is **disabled in firmware** and **blacklisted**, those lines may **not appear**.
+**CM4 (this project)** uses the standard Raspberry Pi firmware overlays **`dtoverlay=disable-wifi`** and, when you want Bluetooth off too, **`dtoverlay=disable-bt`**. They live in **`/boot/firmware/config.txt`** (Bookworm-era layout). The full **`[cm4]` + `[all]` + `cmdline.txt`** bench layout is in **[CM4 M.2 bench (config.txt and cmdline.txt reference)](#cm4-m2-bench-configtxt-and-cmdlinetxt-reference)** (earlier in this doc).
 
-### Reference module SKU
+**Important:** Put **`dtoverlay=disable-bt`** under the **`[cm4]`** section. Entries under **`[pi4]`** / **`[pi3]`** / **`[pi0w]`** do **not** apply to a Compute Module 4 — a common mistake is **`hci0`** still appearing after reboot because **`disable-bt`** was only set for other Pi models.
 
-Bench notes match **CM4108032** ([Raspberry Pi product listing](https://www.raspberrypi.com/products/compute-module-4/?variant=raspberry-pi-cm4108032)): **8GB RAM**, **32GB eMMC**, **onboard 2.4 / 5 GHz Wi‑Fi (802.11ac)** and **Bluetooth 5.0** (hardware present). **When onboard Wi-Fi is enabled in device-tree** (`disable-wifi` **not** set), **`mmc1` + `brcmfmac` + SDIO `wlan*` are expected** if wiring and antenna are correct — do not dismiss missing onboard `wlan*` as "CM4 without wireless." With **`disable-wifi`**, no SDIO `wlan*` is **intentional**. Part-number decoding (**CM4** / **1**=wireless / **08**=8GB / **032**=32GB eMMC) matches Table 9–10 in the [CM4 datasheet PDF](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf).
+A [Home Assistant community thread](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312) discusses disabling SDIO radios; **[post 11](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312/11)** is about **Raspberry Pi 5**, which needs different overlay names (**`disable-wifi-pi5`** / **`disable-bt-pi5`**) and sometimes **manually adding** `.dtbo` files. **Do not** mix Pi 5 overlay names into a **CM4** `config.txt` unless you are actually on a Pi 5.
 
-### CM4 datasheet (official)
+#### What “disabled” should look like
 
-**[Compute Module 4 datasheet (PDF)](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf)** — use for pinout, RF, and PCIe rules. Diagnostics-oriented excerpts:
+| Check | Onboard Wi‑Fi disabled | Onboard BT disabled |
+|--------|-------------------------|----------------------|
+| **Firmware** | `grep -E 'disable-wifi' /boot/firmware/config.txt` shows **`dtoverlay=disable-wifi`** (not commented) | Same for **`dtoverlay=disable-bt`** |
+| **Driver** | **`brcmfmac`** does **not** appear in **`lsmod`** (SDIO WLAN block not brought up) | No **Bluetooth HCI** device; **`/sys/class/bluetooth`** empty or missing |
+| **Runtime** | No **Broadcom SDIO `wlan*`** from **`iw dev`** / **`iw phy`** (only your **M.2** PHYs appear) | **`rfkill list`** has no Bluetooth controller, or **`hciconfig`** / **`bluetoothctl list`** show nothing (tools may be absent on minimal images) |
+| **`dmesg`** | No successful **`brcmfmac`** / **CYW43455** attach; **`mmc1`** may still log on some builds — interpret together with **`disable-wifi`** | No **`hci0`** registration from the SDIO/BT side |
 
-- **Onboard vs external antenna:** The module can use a **PCB trace antenna** or a **U.FL** external antenna; selection is **fixed at boot** via `config.txt`: **`dtparam=ant1`** (internal) or **`dtparam=ant2`** (external). Wrong choice for how the hardware is actually wired can make Wi‑Fi look dead or very weak.
-- **`WL_nDisable` / `BT_nDisable`:** If a carrier ties either **low**, the respective radio is **held off** (datasheet §2.1.1–2.1.2). **Floating** is OK (internal pull-ups). Suspect the base board if SDIO Wi‑Fi never powers but Bluetooth paths behave oddly.
-- **PCIe (Gen 2 ×1):** Follow **clock request** and **reset** wiring on custom designs; on a commercial IO board this is already handled. If a device misbehaves on interrupts, the datasheet notes **`pci=nomsi`** on the kernel command line as a common experiment (§2.3).
-- **Mechanical / RF:** On-board antenna needs **clearance** from metal / ground fill (datasheet §3.1); poor enclosure layout hurts 2.4 GHz especially. Prefer **certified antenna kits** if you are not reusing Pi’s own RF layout.
-- **Power:** **+5 V** should stay **≥4.75 V** under load; typical operating current order of **~1.4 A** cited in the doc — relevant when **USB + M.2 + radios** stack on a **5 V / 2.5 A** class adapter (see carrier notes below).
+**[`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh)** prints **`config.txt` lines** (including **`disable-bt`**), **`lsmod`** for **`brcmf`**, short **`dmesg`** hints, **`rfkill`**, and Bluetooth sysfs so you can confirm in one capture.
 
-### Reference carrier board
+#### Quick manual check
 
-**[Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm)** (“Mini Base Board B”): **M.2 M key** slot (per Waveshare: NVMe **or** PCIe **M-key** communication modules), **Gigabit Ethernet**, **5 V** power input (their docs specify **5 V / 2.5 A** class supply for the board). **RTC** and fan header are on-board; the CM4 itself is not included.
+```bash
+grep -nE 'disable-wifi|disable-bt' /boot/firmware/config.txt
+lsmod | grep -E '^brcmf' || echo "no brcmfmac loaded"
+iw dev
+ls /sys/class/bluetooth 2>/dev/null || echo "no Bluetooth class devices"
+rfkill list 2>/dev/null
+```
 
-Diagnostics-relevant notes:
+If **`disable-wifi`** is set but you still see **`brcmfmac`** and an SDIO **`wlan`**, the overlay is not active (wrong partition, typo, or **`config.txt`** not read — e.g. empty file).
 
-- **PCIe Wi‑Fi (`mt7915e`)** rides the **M.2 M-key** link documented for that slot — same **power, mechanical, and thermal** caveats as any M.2 NIC on a small 5 V carrier (reseating, **adequate PSU**, **cold** power cycle if the link wedges).
-- **Onboard CM4 Wi‑Fi / BT** use the **CM4’s own** u.FL / antenna arrangement, not the M.2 slot. Waveshare’s kit photos note **antennas are not included**; with **CM4108032** you still need **proper 2.4/5 GHz (and BT if split) antennas** connected per the CM4 mechanical setup, or performance may be poor and bring-up can look “dead.”
-- **M.2 vs NVMe:** If the slot is populated with a **Wi‑Fi module**, it is **not** available for NVMe at the same time — only one M-key device.
+---
 
-### M.2 Wi‑Fi module (524WiFi AW7916-AED)
+## Problem statement: symptoms and failure modes
 
-Mesh nodes here use **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** (**MediaTek MT7916AN**), marketed as **Wi‑Fi 6E AX3000**, **DBDC** (2.4 GHz + 5/6 GHz), **two IPEX antenna ports**, **PCIe 2.1** device. Vendor documentation points at the **Linux `mt76` / `mt7915e`** stack ([OpenWrt `mt7915` tree reference](https://github.com/openwrt/mt76/tree/master/mt7915) as cited on their product page).
+**Hypothesis (working model):** Instability on this bench setup is often **not** “mesh scripts first” — it clusters around **PCIe + power + `mt7915e` firmware** (probe **-110** / **-12**), **spurious PCIe IRQ / AER** (IRQ **#26** shared path), **asynchronous SError** on **MMIO** to the radio (panic paths in **`mt7915_init_work`** or channel configuration), and **brownout / watchdog** when load + PSU + M.2 current align badly. **Unclean shutdowns** (power loss, hang without flush) show up as **journal corruption** on the next boot — separate from mesh logic.
 
-**Power (from vendor spec):** up to **~8 W** peak, **~5 W** typical; they ask board designers for **3.3 V @ 3.5 A** (minimum **3 A**) to the module. On CM4 + IO boards, kernel logs often show **PCIe 3.3 V regulators as “dummy”** — if the **M.2 3.3 V rail sags** under this load (especially with **USB, CM4, and second radio**), expect **probe timeouts (-110)**, **ENOMEM (-12)**-style failures, or **intermittent** `mt7915e` bring-up. **Heatsink** (vendor ships **30×30×10 mm** option) matters for sustained power.
+| Source | What to look for |
+|--------|------------------|
+| **PCIe / `mt7915e`** | **`Message 000101ed` timeout → -110**, **probe -12 (ENOMEM)**; firmware lines that look like placeholders (`____000000` / `DEV_000000`) — still read **following** lines for **timeout vs `wlan` up**. |
+| **Root port / IRQ** | **`irq 26: nobody cared`**, **`aer_irq`**, **`Disabling IRQ #26`** → often precedes **-110** on **`mt7915e`** (see [PCIe IRQ #26 / AER vs `mt7915e` probe (-110)](#pcie-irq-26--aer-vs-mt7915e-probe--110) below). |
+| **Panic / pstore** | **`Asynchronous SError Interrupt`** in **`mt7915_init_work`** / **`mt76_mmio_*`** (deferred MAC init), or in **`mt7915_rr`** / **`mt7915_update_channel`** (channel programming) — **hardware/driver**, not mesh scripts. |
+| **Power / thermal** | **`vcgencmd get_throttled`** non-zero; **M.2 3.3 V** margin; **heatsink** on module. |
+| **Logs** | **`system.journal` corrupted or uncleanly shut down** after watchdog or power cut; **`pstore` empty** if hang without panic. |
+| **Mesh stack** | **`/etc/default/mesh` missing**, **`bat0` missing**, **`node-manager`** touching missing **`wpa_supplicant`** when **PCIe Wi‑Fi is late** — [Mesh stack (symptoms vs fixes in-tree)](#mesh-stack-symptoms-vs-fixes-in-tree). |
 
-**M.2 keying:** The listing specifies **M.2 A+E key** (typical laptop Wi‑Fi). The [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) documents an **M key** slot — only use combinations that are **electrically and mechanically valid** (correct adapter, correct module variant, or a carrier that matches the module key).
+### What we saw on the reference unit (Wi‑Fi)
 
-**M.2 adapter (A+E → M-key socket):** Field build uses this **AliExpress** board: [item `4000175123887`](https://www.aliexpress.com/item/4000175123887.html?spm=a2g0o.order_list.order_list_main.66.787318027rHYJu) (confirm pinout/keying on the seller page). Adapters like this are a common way to fit **laptop-style Wi‑Fi modules** into **M-key PCIe** slots; quality varies — **3.3 V path, ground return, and connector wear** can contribute to **intermittent `mt7915e` probe (-110 / -12)** even when the **AW7916-AED** module itself is fine. Reseat adapter **and** module, and compare with a **known-good direct-fit** setup if problems persist.
+| Component | Observation |
+|-----------|----------------|
+| **PCIe Wi‑Fi** | Module: **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** (MT7916AN). `lspci`: **14c3:7906**, driver **`mt7915e`**. Observed failures: **`Message 000101ed` timeout → -110**, or **probe -12 (ENOMEM)** on some boots — power / DMA / thermal / firmware. |
+| **Built-in Wi‑Fi** | **No `brcmfmac`** / no SDIO **`wlan*`** is **expected** if **`dtoverlay=disable-wifi`** (M.2-only bench profile). If onboard Wi‑Fi **is** enabled and still missing on **CM4108032**, treat as **SDIO / DT / antenna / carrier** — not a wireless-less SKU mistake. |
+| **Morse HaLow** | Driver may log SPI probe failures; **ignore for bench diagnosis** when no HaLow hardware is connected (see [Morse HaLow (optional hardware)](#morse-halow-80211ah)). |
 
-**PCI ID on bench images:** `lspci` has shown **`14c3:7906`** with driver **`mt7915e`** — treat as **MediaTek Filogic / mt76 family**; marketing “7916” vs PCI **7906** naming can differ by stepping/SKU.
+---
 
-## Access
+## Hypotheses, isolation, and mitigations
+
+Treat **three independent paths**; only one needs to work for a useful bench node, but you must know **which** you have.
+
+| Path | What “good” looks like | Typical failure |
+|------|-------------------------|-----------------|
+| **Onboard CM4 wireless** | `brcmfmac` loaded, `mmc1` brings up SDIO, `wlan0` (or similar) from Broadcom | **`disable-wifi` set** → path intentionally off; ignore. On **wireless-less** CM4 SKUs, `mmc1` failure is often **expected**. On **CM4108032** with onboard Wi‑Fi **enabled**, **`mmc1` failure + no `brcmfmac` is a bug to fix** (hardware, antenna, DT). |
+| **PCIe NIC (AW7916-AED / 14c3:7906 / `mt7915e`)** | `lspci` sees device, `dmesg` completes probe, **`iw dev`** shows an interface | **-110** / **-12**: NIC, **M.2 3.3 V current**, slot, thermal, firmware — see [524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/) power notes |
+| **Morse HaLow** | Only relevant if the module is wired; **-61 on SPI** with no hardware is noise | — |
+
+### What the local `kernel-log-snapshot.txt` actually shows
+
+That file is a **slice** of one boot (see `.gitignore` — optional local copy). On **mesh-582a** it includes:
+
+- **PCIe**: `brcm-pcie … link up, 5.0 GT/s PCIe x1`; device **`[14c3:7906]`** enumerated — the **physical link and enumeration are OK** on that boot.
+- **`mt7915e`**: Driver enables the device, disables ASPM, prints HW/SW and WM/WA firmware lines — then the **saved log ends** (Ethernet link-up). It does **not** include a later **-110** or `wlan` registration, so it **neither proves the NIC good nor bad**; you need **`journalctl -k -b 0` / `dmesg` through the full `mt7915e` probe**.
+
+If firmware lines look like placeholders (`____000000` / `DEV_000000`), still read the **next** kernel lines: either **`wlan` appears** (likely fine) or **timeout / probe failed** (focus on NIC + power + firmware).
+
+- **`mmc1: Failed to initialize a non-removable card`**: With **`disable-wifi`**, ignore for mesh (onboard path disabled). Otherwise on **CM4108032**, pair with **`brcmfmac`** / **`dmesg | grep -i brcmf`** — onboard Wi‑Fi block did not come up; fix **SDIO / antenna / DT** if you need that radio.
+
+### Bench order (fastest discrimination)
+
+1. **CM4 SKU / onboard radio** — **CM4108032** includes SDIO Wi‑Fi hardware; with **`disable-wifi`**, ignore SDIO for mesh. If your module is **without** wireless, `mmc1` / no internal `wlan` can be **expected**, and **PCIe or USB** must supply Wi‑Fi.
+2. **PCIe mechanical / power** — Reseat the M.2 (or adapter), **cold** power-off 30s, try another **carrier** if available. Undersized PSU can show as **link drops** or **probe timeouts** under load (see [`network-drops-60s.md`](network-drops-60s.md)).
+3. **Swap the NIC** — Same 7906-class module in **another** Linux host vs **another** known-good PCIe Wi‑Fi card in this CM4 isolates **module vs slot vs CM4**.
+4. **Software contrast (one boot)** — Boot a **plain Raspberry Pi OS** (same kernel family if possible) and capture **`dmesg | grep -iE 'mt79|7915|7906|pcie'`**. If **Pi OS works** but the mesh image fails, suspect **firmware blobs, module blacklist, or init timing**; if **both fail**, weight **hardware / power** higher.
+5. **Full failure capture** — Save complete probe output:  
+   `dmesg -T > /tmp/dmesg.txt` immediately after boot (or persistent journal and `journalctl -k -b -1` after a failed boot).
+
+### Useful follow-ups when PCIe Wi‑Fi times out (-110)
+
+- Reseat module, cold power cycle, carrier-specific PCIe **3.3 V / enable / reset** notes.
+- `dmesg | grep -E 'mt7915|7915|7906'` and compare loaded firmware files (`modinfo mt7915e`) to what the vendor/kernel expects.
+- **`pci=nomsi`** on the kernel command line (`/boot/firmware/cmdline.txt`): [CM4 datasheet §2.3](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf) notes this when PCIe devices misbehave on **MSI**; try if you see **`mt7915e` timeouts** together with IRQ issues below. (Also listed in [CM4 M.2 bench (config.txt and cmdline.txt reference)](#cm4-m2-bench-configtxt-and-cmdlinetxt-reference).)
+- **Security:** provisioning logs may contain mesh/AP keys — rotate if logs are shared.
+
+### PCIe IRQ #26 / AER vs `mt7915e` probe (-110)
+
+On a **bad** boot, `dmesg` can show **`irq 26: nobody cared`** on **CM4**, with handlers listed as **`pcie_pme_irq`** and **`aer_irq`** (PCIe **Advanced Error Reporting** on the root port), followed by **`Disabling IRQ #26`**. That line is shared with the **M.2** device under the BCM2711 bridge — once the kernel **disables** it, **`mt7915e` firmware messaging** often **times out** (`Message 000101ed …`, **-110**). **Bluetooth** (`hci0`) may also log **-110** in the same window.
+
+**Mitigations to try (in order):** (1) **`pci=nomsi`** in `cmdline.txt` and reboot; (2) **`irqpoll`** on the command line for a **diagnostic** boot only (high overhead — confirms spurious/unhandled IRQ theory); (3) **hardware**: cold cycle, **M.2 + adapter reseat**, **PSU / 3.3 V** margin per [AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/) notes.
+
+**Unclean shutdown:** journal files may log **corrupted or uncleanly shut down** after watchdog or power loss — use persistent journal + `journalctl -k -b -1` when available (see [Kernel log snapshot (grabbed from device)](#kernel-log-snapshot-grabbed-from-device)).
+
+---
+
+## Diagnostics
+
+### Access
 
 - SSH user: **`radio`** (root SSH was denied in our tests — likely disabled).
 - Non-interactive SSH: **`iw`** and **`rfkill`** live under `/usr/sbin`. Use  
@@ -118,7 +303,7 @@ bash pre-crash-snapshot.sh | tee ~/pre-crash-$(date +%Y%m%d%H%M).txt
 
 PCIe NIC is assumed at **`0000:01:00.0`** (adjust if your `lspci` differs).
 
-## Provisioning logs (typical locations)
+### Provisioning logs (typical locations)
 
 | Path | Notes |
 |------|--------|
@@ -130,7 +315,7 @@ PCIe NIC is assumed at **`0000:01:00.0`** (adjust if your `lspci` differs).
 
 **radio-setup:** Requires wireless PHYs. If **`iw dev`** shows no interfaces, setup can end with **no mesh/AP interfaces** and errors like **“No suitable interface found for AP”** when `eud=wireless`.
 
-## How to check Wi‑Fi radios (optional extras)
+### How to check Wi‑Fi radios (optional extras)
 
 Prefer **[`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh)** above. For spot checks:
 
@@ -143,38 +328,36 @@ iw reg get
 lsusb
 ```
 
-## Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled
+### Kernel log snapshot (grabbed from device)
 
-**CM4 (this project)** uses the standard Raspberry Pi firmware overlays **`dtoverlay=disable-wifi`** and, when you want Bluetooth off too, **`dtoverlay=disable-bt`**. They live in **`/boot/firmware/config.txt`** (Bookworm-era layout). The full **`[cm4]` + `[all]` + `cmdline.txt`** bench layout is in **[CM4 M.2 bench (config.txt and cmdline.txt reference)](#cm4-m2-bench-configtxt-and-cmdlinetxt-reference)** (earlier in this doc).
+- **`kernel-log-snapshot.txt`** — optional **local** copy of `journalctl -k -b 0` (gitignored by default). Regenerate after incidents; keep a **full** capture when isolating **-110** (see [Hypotheses, isolation, and mitigations](#hypotheses-isolation-and-mitigations)).
 
-**Important:** Put **`dtoverlay=disable-bt`** under the **`[cm4]`** section. Entries under **`[pi4]`** / **`[pi3]`** / **`[pi0w]`** do **not** apply to a Compute Module 4 — a common mistake is **`hci0`** still appearing after reboot because **`disable-bt`** was only set for other Pi models.
+#### Previous boot (`journalctl -b -1 -k`)
 
-A [Home Assistant community thread](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312) discusses disabling SDIO radios; **[post 11](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312/11)** is about **Raspberry Pi 5**, which needs different overlay names (**`disable-wifi-pi5`** / **`disable-bt-pi5`**) and sometimes **manually adding** `.dtbo` files. **Do not** mix Pi 5 overlay names into a **CM4** `config.txt` unless you are actually on a Pi 5.
+**New images:** `firstrun.sh` (from `MANET/provisioning/firstrun.sh.template`) installs `/etc/systemd/journald.conf.d/40-rpi-volatile-storage.conf` with **`Storage=persistent`** on first boot so journals land under **`/var/log/journal/<machine-id>/`**.
 
-### What “disabled” should look like
-
-| Check | Onboard Wi‑Fi disabled | Onboard BT disabled |
-|--------|-------------------------|----------------------|
-| **Firmware** | `grep -E 'disable-wifi' /boot/firmware/config.txt` shows **`dtoverlay=disable-wifi`** (not commented) | Same for **`dtoverlay=disable-bt`** |
-| **Driver** | **`brcmfmac`** does **not** appear in **`lsmod`** (SDIO WLAN block not brought up) | No **Bluetooth HCI** device; **`/sys/class/bluetooth`** empty or missing |
-| **Runtime** | No **Broadcom SDIO `wlan*`** from **`iw dev`** / **`iw phy`** (only your **M.2** PHYs appear) | **`rfkill list`** has no Bluetooth controller, or **`hciconfig`** / **`bluetoothctl list`** show nothing (tools may be absent on minimal images) |
-| **`dmesg`** | No successful **`brcmfmac`** / **CYW43455** attach; **`mmc1`** may still log on some builds — interpret together with **`disable-wifi`** | No **`hci0`** registration from the SDIO/BT side |
-
-**[`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh)** prints **`config.txt` lines** (including **`disable-bt`**), **`lsmod`** for **`brcmf`**, short **`dmesg`** hints, **`rfkill`**, and Bluetooth sysfs so you can confirm in one capture.
-
-### Quick manual check
+**Raspberry Pi OS** ships `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf` with **`Storage=volatile`**, so logs stay under `/run` unless overridden. If **`journalctl -u systemd-journald`** still says only **Runtime Journal** and **`/var/log/journal/<machine-id>/` never appears** (e.g. old image), **shadow the RPi file** in `/etc` (same filename replaces the vendor intent cleanly):
 
 ```bash
-grep -nE 'disable-wifi|disable-bt' /boot/firmware/config.txt
-lsmod | grep -E '^brcmf' || echo "no brcmfmac loaded"
-iw dev
-ls /sys/class/bluetooth 2>/dev/null || echo "no Bluetooth class devices"
-rfkill list 2>/dev/null
+sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+sudo tee /etc/systemd/journald.conf.d/40-rpi-volatile-storage.conf >/dev/null <<'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=100M
+RuntimeMaxUse=50M
+EOF
+sudo chown root:systemd-journal /var/log/journal
+sudo chmod 2755 /var/log/journal
+sudo systemctl restart systemd-journald
+# Confirm: should see "Persistent Journal" and a directory under /var/log/journal/<machine-id>/
+sudo ls -la /var/log/journal/
 ```
 
-If **`disable-wifi`** is set but you still see **`brcmfmac`** and an SDIO **`wlan`**, the overlay is not active (wrong partition, typo, or **`config.txt`** not read — e.g. empty file).
+After that survives a **reboot**, `journalctl -b -1 -k` can show the **previous** boot’s kernel log.
 
-## Lowering M.2 Wi‑Fi power (`mt7915e` / AW7916)
+---
+
+## Operational tuning: lowering M.2 Wi‑Fi power (`mt7915e` / AW7916)
 
 The **main knob you control in software** is **transmit power**. The driver/firmware still burns **baseline current** for PCIe, baseband, and the second DBDC chain; **vendor peak (~8 W)** is mostly **PA + processing under load**, not something you eliminate entirely without turning the interface off.
 
@@ -209,15 +392,9 @@ The **main knob you control in software** is **transmit power**. The driver/firm
 
 After you pick values that **still close the mesh**, mirror the existing **`ap-txpower.service`** pattern: **oneshot** **`iw dev <iface> set txpower fixed …`**, **`After=`** / **`BindsTo=`** the right **`sys-subsystem-net-devices-<iface>.device`**, enable the unit. Order it **after** whatever unit brings the interface to **mesh point** type, or use a small **ExecStartPre** delay / script that waits until **`iw dev`** shows the mesh iface — otherwise **`iw`** may run too early.
 
-## What we saw on the reference unit (Wi‑Fi)
+---
 
-| Component | Observation |
-|-----------|----------------|
-| **PCIe Wi‑Fi** | Module: **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** (MT7916AN). `lspci`: **14c3:7906**, driver **`mt7915e`**. Observed failures: **`Message 000101ed` timeout → -110**, or **probe -12 (ENOMEM)** on some boots — power / DMA / thermal / firmware. |
-| **Built-in Wi‑Fi** | **No `brcmfmac`** / no SDIO **`wlan*`** is **expected** if **`dtoverlay=disable-wifi`** (M.2-only bench profile). If onboard Wi‑Fi **is** enabled and still missing on **CM4108032**, treat as **SDIO / DT / antenna / carrier** — not a wireless-less SKU mistake. |
-| **Morse HaLow** | Driver may log SPI probe failures; **ignore for bench diagnosis** when no HaLow hardware is connected (see above). |
-
-### Bench update: U.FL / IPEX antenna (CM4108032 — onboard Wi‑Fi only)
+## Bench update: U.FL / IPEX antenna (CM4108032 — onboard Wi‑Fi only)
 
 **Applies only when onboard SDIO Wi‑Fi is enabled** (no `disable-wifi`). Skip if you use **M.2-only** mesh.
 
@@ -237,77 +414,7 @@ sudo iw dev wlan0 scan | head -40         # APs visible = RX path plausible
 
 Check **`/boot/firmware/config.txt`** (or overlay snippets) for **`ant1`/`ant2`**. PCIe **M.2** Wi‑Fi (`mt7915e`) remains a **separate** interface if present — use **`iw dev`** and **`lspci`** to see **both** radios.
 
-## Hardware isolation (do this before blaming mesh scripts)
-
-Treat **three independent paths**; only one needs to work for a useful bench node, but you must know **which** you have.
-
-| Path | What “good” looks like | Typical failure |
-|------|-------------------------|-----------------|
-| **Onboard CM4 wireless** | `brcmfmac` loaded, `mmc1` brings up SDIO, `wlan0` (or similar) from Broadcom | **`disable-wifi` set** → path intentionally off; ignore. On **wireless-less** CM4 SKUs, `mmc1` failure is often **expected**. On **CM4108032** with onboard Wi‑Fi **enabled**, **`mmc1` failure + no `brcmfmac` is a bug to fix** (hardware, antenna, DT). |
-| **PCIe NIC (AW7916-AED / 14c3:7906 / `mt7915e`)** | `lspci` sees device, `dmesg` completes probe, **`iw dev`** shows an interface | **-110** / **-12**: NIC, **M.2 3.3 V current**, slot, thermal, firmware — see [524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/) power notes |
-| **Morse HaLow** | Only relevant if the module is wired; **-61 on SPI** with no hardware is noise | — |
-
-### What the local `kernel-log-snapshot.txt` actually shows
-
-That file is a **slice** of one boot (see `.gitignore` — optional local copy). On **mesh-582a** it includes:
-
-- **PCIe**: `brcm-pcie … link up, 5.0 GT/s PCIe x1`; device **`[14c3:7906]`** enumerated — the **physical link and enumeration are OK** on that boot.
-- **`mt7915e`**: Driver enables the device, disables ASPM, prints HW/SW and WM/WA firmware lines — then the **saved log ends** (Ethernet link-up). It does **not** include a later **-110** or `wlan` registration, so it **neither proves the NIC good nor bad**; you need **`journalctl -k -b 0` / `dmesg` through the full `mt7915e` probe**.
-
-If firmware lines look like placeholders (`____000000` / `DEV_000000`), still read the **next** kernel lines: either **`wlan` appears** (likely fine) or **timeout / probe failed** (focus on NIC + power + firmware).
-
-- **`mmc1: Failed to initialize a non-removable card`**: With **`disable-wifi`**, ignore for mesh (onboard path disabled). Otherwise on **CM4108032**, pair with **`brcmfmac`** / **`dmesg | grep -i brcmf`** — onboard Wi‑Fi block did not come up; fix **SDIO / antenna / DT** if you need that radio.
-
-### Bench order (fastest discrimination)
-
-1. **CM4 SKU / onboard radio** — **CM4108032** includes SDIO Wi‑Fi hardware; with **`disable-wifi`**, ignore SDIO for mesh. If your module is **without** wireless, `mmc1` / no internal `wlan` can be **expected**, and **PCIe or USB** must supply Wi‑Fi.
-2. **PCIe mechanical / power** — Reseat the M.2 (or adapter), **cold** power-off 30s, try another **carrier** if available. Undersized PSU can show as **link drops** or **probe timeouts** under load (see [`network-drops-60s.md`](network-drops-60s.md)).
-3. **Swap the NIC** — Same 7906-class module in **another** Linux host vs **another** known-good PCIe Wi‑Fi card in this CM4 isolates **module vs slot vs CM4**.
-4. **Software contrast (one boot)** — Boot a **plain Raspberry Pi OS** (same kernel family if possible) and capture **`dmesg | grep -iE 'mt79|7915|7906|pcie'`**. If **Pi OS works** but the mesh image fails, suspect **firmware blobs, module blacklist, or init timing**; if **both fail**, weight **hardware / power** higher.
-5. **Full failure capture** — Save complete probe output:  
-   `dmesg -T > /tmp/dmesg.txt` immediately after boot (or persistent journal and `journalctl -k -b -1` after a failed boot).
-
-### Useful follow-ups when PCIe Wi‑Fi times out (-110)
-
-- Reseat module, cold power cycle, carrier-specific PCIe **3.3 V / enable / reset** notes.
-- `dmesg | grep -E 'mt7915|7915|7906'` and compare loaded firmware files (`modinfo mt7915e`) to what the vendor/kernel expects.
-- **`pci=nomsi`** on the kernel command line (`/boot/firmware/cmdline.txt`): [CM4 datasheet §2.3](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf) notes this when PCIe devices misbehave on **MSI**; try if you see **`mt7915e` timeouts** together with IRQ issues below.
-- **Security:** provisioning logs may contain mesh/AP keys — rotate if logs are shared.
-
-### PCIe IRQ #26 / AER vs `mt7915e` probe (-110)
-
-On a **bad** boot, `dmesg` can show **`irq 26: nobody cared`** on **CM4**, with handlers listed as **`pcie_pme_irq`** and **`aer_irq`** (PCIe **Advanced Error Reporting** on the root port), followed by **`Disabling IRQ #26`**. That line is shared with the **M.2** device under the BCM2711 bridge — once the kernel **disables** it, **`mt7915e` firmware messaging** often **times out** (`Message 000101ed …`, **-110**). **Bluetooth** (`hci0`) may also log **-110** in the same window.
-
-**Mitigations to try (in order):** (1) **`pci=nomsi`** in `cmdline.txt` and reboot; (2) **`irqpoll`** on the command line for a **diagnostic** boot only (high overhead — confirms spurious/unhandled IRQ theory); (3) **hardware**: cold cycle, **M.2 + adapter reseat**, **PSU / 3.3 V** margin per [AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/) notes.
-
-**Unclean shutdown:** journal files may log **corrupted or uncleanly shut down** after watchdog or power loss — use persistent journal + `journalctl -k -b -1` when available (see below).
-
-## Kernel log snapshot (grabbed from device)
-
-- **`kernel-log-snapshot.txt`** — optional **local** copy of `journalctl -k -b 0` (gitignored by default). Regenerate after incidents; keep a **full** capture when isolating **-110** (see above).
-
-### Previous boot (`journalctl -b -1 -k`)
-
-**New images:** `firstrun.sh` (from `MANET/provisioning/firstrun.sh.template`) installs `/etc/systemd/journald.conf.d/40-rpi-volatile-storage.conf` with **`Storage=persistent`** on first boot so journals land under **`/var/log/journal/<machine-id>/`**.
-
-**Raspberry Pi OS** ships `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf` with **`Storage=volatile`**, so logs stay under `/run` unless overridden. If **`journalctl -u systemd-journald`** still says only **Runtime Journal** and **`/var/log/journal/<machine-id>/` never appears** (e.g. old image), **shadow the RPi file** in `/etc` (same filename replaces the vendor intent cleanly):
-
-```bash
-sudo mkdir -p /etc/systemd/journald.conf.d /var/log/journal
-sudo tee /etc/systemd/journald.conf.d/40-rpi-volatile-storage.conf >/dev/null <<'EOF'
-[Journal]
-Storage=persistent
-SystemMaxUse=100M
-RuntimeMaxUse=50M
-EOF
-sudo chown root:systemd-journal /var/log/journal
-sudo chmod 2755 /var/log/journal
-sudo systemctl restart systemd-journald
-# Confirm: should see "Persistent Journal" and a directory under /var/log/journal/<machine-id>/
-sudo ls -la /var/log/journal/
-```
-
-After that survives a **reboot**, `journalctl -b -1 -k` can show the **previous** boot’s kernel log.
+---
 
 ## Capturing reset cause — phased plan (UART + optional ramoops)
 
@@ -390,6 +497,8 @@ On a **CM4** with **PCIe M.2** **`14c3:7906`** / **`mt7915e`** (e.g. **AW7916-AE
 
 So the fault was an **SError** on **MMIO** to the radio **during deferred MAC init**, not a mesh script failure. Triage weights **PCIe link / M.2 power & seating / `pci=nomsi` / `pcie-32bit-dma` / PSU** (see [`network-drops-60s.md`](network-drops-60s.md)); use the **pstore file** (sanitized) when opening **[raspberrypi/linux](https://github.com/raspberrypi/linux)** or **[openwrt/mt76](https://github.com/openwrt/mt76)** issues.
 
+**Note:** Separate incidents have also shown **SError** / panic in **`mt7915_rr`** / **`mt7915_update_channel`** (channel programming path) — same triage lens (**PCIe, power, seating, `pci=nomsi`, `pcie-32bit-dma`**).
+
 ### Phase 4 — Debug-only watchdog relaxation
 
 To prove **“hang then WDT reset”** vs **“instant power loss”**, see **Mitigation A** in [`network-drops-60s.md`](network-drops-60s.md) (**disable systemd hardware watchdog** temporarily). **Only** with **serial** attached — otherwise a hang leaves a **brick** with no network.
@@ -400,6 +509,8 @@ To prove **“hang then WDT reset”** vs **“instant power loss”**, see **Mi
 - **Logs without network:** mount the SD card on a PC and copy **`var/log/journal/`** (if persistent journaling was working) or **`/boot/firmware/*.log`** and **`var/log/radio-setup.log`**.
 - If the journal was still **volatile**, the previous boot is **gone** unless you had **serial console** logging or **remote syslog**.
 
+---
+
 ## Mesh stack (symptoms vs fixes in-tree)
 
 Field journals showed **`batman-enslave` failing** with **`/etc/default/mesh not found`**, **`bat0` missing**, and **`node-manager`** editing **non-existent** `wpa_supplicant-wlan*.conf` when PCIe Wi‑Fi was flaky or still coming up.
@@ -407,14 +518,18 @@ Field journals showed **`batman-enslave` failing** with **`/etc/default/mesh not
 | Symptom | Cause | Change |
 |--------|--------|--------|
 | `Mesh configuration /etc/default/mesh not found` | File was only written **inside** the wlan loop; empty `mesh_if` → file never created | **`radio-setup.sh`** writes `/etc/default/mesh` as soon as **`MESH_NAME`** is set from `mesh.conf` |
-| `integer expression expected` on PHY wait | `grep -c` prints `0` with exit 1, then `|| echo 0` appended a second line | **`radio-setup.sh`** uses `grep -c … \|\| true` only |
+| `integer expression expected` on PHY wait | `grep -c` prints `0` with exit 1, then `&#124;&#124; echo 0` appended a second line | **`radio-setup.sh`** uses `grep -c …` with `&#124;&#124; true` only |
 | `sed: can't read … wpa_supplicant-wlan0.conf` | Static/ACS node-manager assumed configs existed | **`node-manager-static.sh`** / **`node-manager-acs.sh`** skip `sed`/restarts if conf files are missing |
 
 Unclean power-downs still produce **journal corruption** lines on the next boot; that is separate from mesh config logic.
 
+---
+
 ## Network dies after ~1 minute
 
 See **[`network-drops-60s.md`](network-drops-60s.md)** — hardware watchdog vs PCIe Wi‑Fi vs empty mesh configs.
+
+---
 
 ## Related repo paths
 
