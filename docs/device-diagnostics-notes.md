@@ -18,6 +18,7 @@ Reference for future sessions. Last updated from checks against a **Raspberry Pi
 - [Boot configuration (bench)](#boot-configuration-bench)
   - [Current bench profile (read this first)](#current-bench-profile-read-this-first)
   - [CM4 M.2 bench (config.txt and cmdline.txt reference)](#cm4-m2-bench-configtxt-and-cmdlinetxt-reference)
+  - [Full MANET CM4 firmware reference files](#full-manet-cm4-firmware-reference-files)
   - [Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled](#verifying-onboard-cm4-wi%E2%80%91fi--bluetooth-are-disabled)
     - [What “disabled” should look like](#what-disabled-should-look-like)
     - [Quick manual check](#quick-manual-check)
@@ -162,6 +163,30 @@ dtoverlay=ramoops,total-size=0x100000
 **`/boot/firmware/cmdline.txt`** — **not** `config.txt`: append **`pci=nomsi`** (single space–separated token on the **same line** as existing options). Mitigates some **MSI / IRQ** behaviour with PCIe NICs; see [CM4 datasheet §2.3](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf) excerpt, **PCIe IRQ #26 / AER** / mitigations later in this doc, and [`network-drops-60s.md`](network-drops-60s.md).
 
 **Also on bench images (not duplicated as overlays above):** comment out or omit **Morse / HaLow / camera** `dtoverlay` lines shipped by the MANET tarball when you run **M.2-only** — use the same **`grep`** patterns as [`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh) (`morse`, `mm610`, `spi`, `camera`, `sdio`). **`dtparam=ant1`** / **`ant2`** only affect **onboard** CM4 RF when SDIO Wi‑Fi is enabled; with **`disable-wifi`**, they are usually irrelevant for the **PCIe** `wlan*` mesh path.
+
+### Full MANET CM4 firmware reference files
+
+The snippets above cover the **minimum** **`[cm4]`** / **`cmdline`** tokens. **Production MANET / Morse-oriented images** use a **full** **`/boot/firmware/config.txt`** (GPIO, **`ramoops`**, Morse SPI, SDIO clock, `sysinfo`, etc.). A **checked-in copy** of that layout — including **`dtoverlay=disable-wifi`** and **`dtoverlay=disable-bt`** under **`[cm4]`** — is kept in the repo as:
+
+**[`MANET/node_tools/raspberry-config-cm4-m2-restore.txt`](../MANET/node_tools/raspberry-config-cm4-m2-restore.txt)**
+
+Copy it to the node as **`/boot/firmware/config.txt`** when **`config.txt`** is missing, empty, or has been reset (see below).
+
+**Example `/boot/firmware/cmdline.txt`** (must be **one line**; set **`root=PARTUUID=…`** from `blkid /dev/mmcblk0p2` on that machine):
+
+```text
+console=serial0,115200 console=tty1 root=PARTUUID=48dff863-02 rootfstype=ext4 fsck.repair=yes rootwait pci=nomsi
+```
+
+The **`PARTUUID`** above is an **example** only — **do not** copy blindly; always match the **root** partition on the **actual** medium.
+
+**Operational pitfall (seen in the field):** if **`/boot/firmware/config.txt`** or **`cmdline.txt`** is **empty (0 bytes)** or truncated, firmware may **fall back to defaults**. Symptoms: **`brcmfmac`** / onboard **`wlan*`** reappear; **`pci=nomsi`** is **absent** from **`/proc/cmdline`** even though you “edited” the files earlier. After any imaging or script that touches **`/boot/firmware`**, verify:
+
+```bash
+wc -c /boot/firmware/config.txt /boot/firmware/cmdline.txt
+grep -E 'disable-wifi|^\[cm4\]' /boot/firmware/config.txt
+grep -q 'pci=nomsi' /proc/cmdline && echo 'pci=nomsi active'
+```
 
 ### Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled
 

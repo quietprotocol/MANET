@@ -71,6 +71,11 @@ fi
 if [[ -n "$mesh_ssid" ]]; then
     echo " > Setting mesh SSID to: $mesh_ssid"
     MESH_NAME=$mesh_ssid
+    # Write immediately so batman-enslave never runs without /etc/default/mesh if
+    # this script stops before the wlan loop (driver wait, modprobe, etc.).
+    mkdir -p /etc/default
+    echo "MESH_NAME=\"$MESH_NAME\"" > /etc/default/mesh
+    echo "mesh_use_5ghz=\"${mesh_use_5ghz:-y}\"" >> /etc/default/mesh
     sleep 0.5
 fi
 
@@ -108,14 +113,7 @@ fi
 
 sleep 2
 
-# batman-if-setup.sh and batman-enslave.service source this file. It must exist as
-# soon as the mesh SSID is known — not only after wlan interfaces are enumerated.
-# If WiFi is down or mesh_if is empty, the wlan loop below never runs; without this,
-# batman-enslave fails with "Mesh configuration /etc/default/mesh not found".
-if [[ -n "${MESH_NAME:-}" ]]; then
-    echo "MESH_NAME=\"$MESH_NAME\"" > /etc/default/mesh
-    echo "mesh_use_5ghz=\"${mesh_use_5ghz:-y}\"" >> /etc/default/mesh
-fi
+# /etc/default/mesh is written as soon as mesh_ssid is parsed (see block above).
 
 #
 # Finish setting up network devices (wireless)
@@ -154,11 +152,14 @@ DRIVER_WAIT_COUNT=0
 MAX_DRIVER_WAIT=30  # 60 seconds total
 
 while [ $DRIVER_WAIT_COUNT -lt $MAX_DRIVER_WAIT ]; do
-    # grep -c prints 0 and exits 1 when there are no matches; do not append "0" or
-    # PHY_COUNT becomes two lines and [ ] integer tests break.
+    # grep -c prints 0 and exits 1 when there are no matches — use `|| true`, never
+    # `|| echo 0` (that appends a second line and breaks `[` integer tests).
     PHY_COUNT=$(iw dev 2>/dev/null | grep -c "^phy#" || true)
+    # If an old script used `|| echo 0`, PHY_COUNT can be "0\n0"; keep first line only.
+    PHY_COUNT=${PHY_COUNT%%$'\n'*}
+    PHY_COUNT=${PHY_COUNT:-0}
 
-    if [ "${PHY_COUNT:-0}" -gt 0 ]; then
+    if [ "$PHY_COUNT" -gt 0 ]; then
         echo "✓ Found $PHY_COUNT wireless PHY(s)"
         break
     fi
@@ -711,7 +712,7 @@ Before=wpa_supplicant@.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'for LOBBY_FILE in /etc/wpa_supplicant/wpa_supplicant-wlan*-lobby.conf; do DEST_FILE="\${LOBBY_FILE%-lobby.conf}.conf"; cp "\$LOBBY_FILE" "\$DEST_FILE"; done'
+ExecStart=/bin/sh -c 'shopt -s nullglob; for LOBBY_FILE in /etc/wpa_supplicant/wpa_supplicant-wlan*-lobby.conf; do [ -f "\$LOBBY_FILE" ] || continue; DEST_FILE="\${LOBBY_FILE%%-lobby.conf}.conf"; cp "\$LOBBY_FILE" "\$DEST_FILE"; done'
 RemainAfterExit=yes
 
 [Install]
