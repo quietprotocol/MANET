@@ -24,7 +24,7 @@ The project transforms hardware like the Raspberry Pi CM4 into self-forming, sel
 
 ## Repository Structure
 
-* **`docs/`**: Field notes and diagnostics — [`docs/device-diagnostics-notes.md`](docs/device-diagnostics-notes.md) (CM4 / M.2 / `pci=nomsi`, **UART phased capture** for mystery resets), [`docs/mesh-node-diagnostics.sh`](docs/mesh-node-diagnostics.sh) (one-shot capture script), [`docs/network-drops-60s.md`](docs/network-drops-60s.md) (watchdog vs radio).
+* **`docs/`**: Field notes and diagnostics — [`docs/device-diagnostics-notes.md`](docs/device-diagnostics-notes.md) (CM4 / M.2 / `pci=nomsi`, **UART** + **`ramoops`/`pstore`** setup), [`docs/mesh-node-diagnostics.sh`](docs/mesh-node-diagnostics.sh) (one-shot capture script), [`docs/verify-ramoops.sh`](docs/verify-ramoops.sh) (check panic-after-reboot logging), [`docs/network-drops-60s.md`](docs/network-drops-60s.md) (watchdog vs radio).
 * **`provisioning/`**: Scripts and templates for flashing the OS image.
 * **`node_tools/`**: The runtime logic for the node. Contains the scripts that run the mesh, including:
     * `node-manager`: The core orchestrator for cooperative mesh functions.

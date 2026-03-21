@@ -293,9 +293,46 @@ When the node **disappears** (watchdog, hang, power glitch), **SSH and disk logs
 
 Save the **raw `.log`**; it is evidence for forums / upstream.
 
-### Phase 3 — Optional: `ramoops` + `pstore` (panic survives reboot)
+### Phase 3 — `ramoops` + `pstore` (no UART required)
 
-If you get **panics** but serial was not connected, **ramoops** can store the **oops/panic** in a **reserved RAM** region and expose it after reboot under **`/sys/fs/pstore/`**. This requires **consistent `cmdline` + DT memory reservation** — treat as **advanced**; validate on a **spare** image. Search **“Linux ramoops raspberry pi”** for current examples matching your kernel.
+Raspberry Pi OS ships a **device-tree overlay** that reserves a small RAM region and registers **ramoops**. After a **panic/oops**, the next boot can expose dumps under **`/sys/fs/pstore/`**; **systemd-pstore** (enabled on typical Pi OS images) may also copy them to **`/var/lib/systemd/pstore/`**.
+
+**1. Enable the overlay** in **`/boot/firmware/config.txt`** (e.g. under **`[all]`** or **`[cm4]`**):
+
+```ini
+dtoverlay=ramoops
+```
+
+On **Pi 4 / CM4** (BCM2711), the firmware loads **`ramoops-pi4`** automatically ([overlay README — `ramoops` / `ramoops-pi4`](https://github.com/raspberrypi/firmware/blob/master/boot/overlays/README)). Default buffer is **64 KB** at **`0x0b000000`** — enough for many panics. To **increase** the buffer (example **1 MB**):
+
+```ini
+dtoverlay=ramoops,total-size=0x100000
+```
+
+Optional tunables (same README): **`base-addr`**, **`record-size`**, **`console-size`**.
+
+**2. Reboot**, then **verify** (or run **[`verify-ramoops.sh`](verify-ramoops.sh)** on the node):
+
+```bash
+dmesg | grep -iE 'ramoops|pstore'
+ls -la /sys/fs/pstore
+ls -la /var/lib/systemd/pstore
+```
+
+You want a line like **`ramoops: attached …`** and **`pstore: Registered ramoops`**.
+
+**3. Optional test** (will **reboot** the machine — use only on a bench node):
+
+```bash
+sudo sh -c 'echo 10 > /proc/sys/kernel/panic'
+echo c | sudo tee /proc/sysrq-trigger
+```
+
+After it comes back, check **`/sys/fs/pstore/`** and **`/var/lib/systemd/pstore/`** for new files (e.g. **`dmesg-ramoops-0`**).
+
+**Limits:** **ramoops** does not help if the CPU **hard-hangs** without an oops, on **power loss**, or if **nothing** is written before reset. **UART** still wins for those.
+
+**Kernel must include `CONFIG_PSTORE` / `CONFIG_PSTORE_RAM`** — stock Raspberry Pi OS kernels usually do; **`verify-ramoops.sh`** greps **`/proc/config.gz`** when present.
 
 ### Phase 4 — Debug-only watchdog relaxation
 
