@@ -334,6 +334,16 @@ After it comes back, check **`/sys/fs/pstore/`** and **`/var/lib/systemd/pstore/
 
 **Kernel must include `CONFIG_PSTORE` / `CONFIG_PSTORE_RAM`** — stock Raspberry Pi OS kernels usually do; **`verify-ramoops.sh`** greps **`/proc/config.gz`** when present.
 
+### Example capture (bench): `Asynchronous SError` during `mt7915_init_work`
+
+On a **CM4** with **PCIe M.2** **`14c3:7906`** / **`mt7915e`** (e.g. **AW7916-AED**), **`/var/lib/systemd/pstore/dmesg-ramoops-0`** has (in one incident) shown:
+
+- **`Kernel panic - not syncing: Asynchronous SError Interrupt`**
+- **Workqueue:** **`phy0 mt7915_init_work [mt7915e]`**
+- **Call trace (abbrev.):** **`mt76_mmio_rr`** / **`mt76_mmio_rmw`** → **`mt7915_rmw`** → **`mt7915_mac_wtbl_update`** → **`mt7915_mac_init`** → **`mt7915_init_work`**
+
+So the fault was an **SError** on **MMIO** to the radio **during deferred MAC init**, not a mesh script failure. Triage weights **PCIe link / M.2 power & seating / `pci=nomsi` / `pcie-32bit-dma` / PSU** (see [`network-drops-60s.md`](network-drops-60s.md)); use the **pstore file** (sanitized) when opening **[raspberrypi/linux](https://github.com/raspberrypi/linux)** or **[openwrt/mt76](https://github.com/openwrt/mt76)** issues.
+
 ### Phase 4 — Debug-only watchdog relaxation
 
 To prove **“hang then WDT reset”** vs **“instant power loss”**, see **Mitigation A** in [`network-drops-60s.md`](network-drops-60s.md) (**disable systemd hardware watchdog** temporarily). **Only** with **serial** attached — otherwise a hang leaves a **brick** with no network.
