@@ -72,6 +72,16 @@ ssh -T radio@mesh-582a.local 'bash -s' < docs/mesh-node-diagnostics.sh | tee dia
 
 Use the **IP** instead of `.local` if mDNS is unreliable. Redirect **`tee`** to keep a dated capture after outages.
 
+### Pre-crash snapshot (under load)
+
+When you expect another **reset** or want a **baseline while the mesh is busy**, run **[`pre-crash-snapshot.sh`](pre-crash-snapshot.sh)** — **AER counters**, **`ip -s` errors**, **temp/throttled**, **`batctl o`**, filtered **`dmesg`**. Save with **`tee`** so you keep a file if SSH dies right after.
+
+```bash
+bash pre-crash-snapshot.sh | tee ~/pre-crash-$(date +%Y%m%d%H%M).txt
+```
+
+PCIe NIC is assumed at **`0000:01:00.0`** (adjust if your `lspci` differs).
+
 ## Provisioning logs (typical locations)
 
 | Path | Notes |
