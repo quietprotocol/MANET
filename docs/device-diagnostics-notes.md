@@ -52,6 +52,25 @@ Mesh nodes here use **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-w
 - Non-interactive SSH: **`iw`** and **`rfkill`** live under `/usr/sbin`. Use  
   `export PATH="/usr/sbin:/sbin:$PATH"`  
   or call `/usr/sbin/iw` explicitly.
+- Prefer **`ssh -T`** (no TTY) if your client errors on pseudo-terminal allocation.
+
+### One-shot diagnostics (canonical)
+
+Use **[`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh)** — single script that consolidates what we use in bench sessions: **identity / `cmdline` + `pci=nomsi` / `config.txt` hints / `iw` + `ip` / PCIe / `lsmod` / `dmesg` (mt7915e, IRQ 26, AER, SDIO, Morse) / previous-boot kernel journal / unclean-shutdown markers / `systemctl --failed` / `vcgencmd` / `modinfo` firmware**.
+
+**On the node** (copy script to the Pi, or mount the repo):
+
+```bash
+bash mesh-node-diagnostics.sh | tee ~/diag-$(date +%Y%m%d%H%M).txt
+```
+
+**From your dev machine** (repo root, replace host):
+
+```bash
+ssh -T radio@mesh-582a.local 'bash -s' < docs/mesh-node-diagnostics.sh | tee diag-$(date +%Y%m%d%H%M).txt
+```
+
+Use the **IP** instead of `.local` if mDNS is unreliable. Redirect **`tee`** to keep a dated capture after outages.
 
 ## Provisioning logs (typical locations)
 
@@ -65,19 +84,17 @@ Mesh nodes here use **[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-w
 
 **radio-setup:** Requires wireless PHYs. If **`iw dev`** shows no interfaces, setup can end with **no mesh/AP interfaces** and errors like **“No suitable interface found for AP”** when `eud=wireless`.
 
-## How to check Wi‑Fi radios (quick checklist)
+## How to check Wi‑Fi radios (optional extras)
+
+Prefer **[`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh)** above. For spot checks:
 
 ```bash
 export PATH="/usr/sbin:/sbin:$PATH"
 iw dev
 iw phy
-ip -br link
 rfkill list
 iw reg get
-dmesg -T | grep -iE 'mt79|7915|wlan|brcmf|cfg80211|morse'
-lsmod | grep -iE 'mac80211|cfg80211|mt79|brcmf|morse'
-lspci | grep -i network    # PCIe Wi‑Fi
-lsusb                      # USB Wi‑Fi
+lsusb
 ```
 
 ## What we saw on the reference unit (Wi‑Fi)
