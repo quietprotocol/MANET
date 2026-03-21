@@ -97,6 +97,41 @@ iw reg get
 lsusb
 ```
 
+## Lowering M.2 Wi‑Fi power (`mt7915e` / AW7916)
+
+The **main knob you control in software** is **transmit power**. The driver/firmware still burns **baseline current** for PCIe, baseband, and the second DBDC chain; **vendor peak (~8 W)** is mostly **PA + processing under load**, not something you eliminate entirely without turning the interface off.
+
+### What works
+
+- **Cap TX power per interface** with **`iw`** (values are **mBm**; **100 mBm ≈ 1 dBm**). Example: **`500` ≈ 5 dBm** — same order as **`ap-txpower.service`** in [`radio-setup.sh`](../MANET/node_tools/radio-setup.sh), which applies to the **EUD AP** interface when that path is enabled. **Mesh backhaul (`wlan0` or whatever carries the mesh point)** is **not** covered by that unit; set it explicitly if you want a lower mesh TX level:
+
+  ```bash
+  export PATH="/usr/sbin:/sbin:$PATH"
+  iw dev wlan0 info                    # confirm name / type
+  iw phy "$(iw dev wlan0 info | awk '/wiphy/ {print "phy" $2}')" info | grep -i -E 'txpower|power|MHz'
+  iw dev wlan0 set txpower fixed 500   # tune; stay within regulatory + phy max
+  ```
+
+  Use **`iw dev wlan0 set txpower auto`** to let the stack choose again. **`iw reg get`** and **`iw phy … info`** show what the kernel will allow.
+
+- **Keep unused logical interfaces down** (e.g. **`ip link set wlan1 down`**) if you do not need the second band as AP/client — savings are **modest** on DBDC silicon (one package), but it avoids accidental traffic on that path.
+
+- **Narrow channel / lower PHY rates** (e.g. **20 MHz** mesh, or tools like **legacy bitrate limits** in limp / tourguide scripts) can **reduce average airtime and power** at the cost of throughput; this is workload-specific.
+
+### What to avoid on mesh backhaul
+
+- **Do not enable 802.11 station power save** (**`iw dev … set power_save on`**) on interfaces used as **mesh points / BATMAN hops**. You need predictable availability to peers; client-style power save is the wrong model and can **hurt mesh stability** even when it appears to apply.
+
+### What is not really tunable from userspace
+
+- **`mt7915e`** exposes **few module parameters** on typical kernels (often **no** simple “low power mode” switch). **PCIe ASPM** is frequently **disabled or constrained** in the driver for stability — do not expect large savings from ASPM tweaks without driver/board work.
+
+- **Firmware** and **internal calibration** dominate behavior below the TX cap; **heatsinking** and a **solid 3.3 V path** to the M.2 module affect **sustained** power and **reliability** more than a small mBm tweak.
+
+### Making TX caps persistent
+
+After you pick values that **still close the mesh**, mirror the existing **`ap-txpower.service`** pattern: **oneshot** **`iw dev <iface> set txpower fixed …`**, **`After=`** / **`BindsTo=`** the right **`sys-subsystem-net-devices-<iface>.device`**, enable the unit. Order it **after** whatever unit brings the interface to **mesh point** type, or use a small **ExecStartPre** delay / script that waits until **`iw dev`** shows the mesh iface — otherwise **`iw`** may run too early.
+
 ## What we saw on the reference unit (Wi‑Fi)
 
 | Component | Observation |
