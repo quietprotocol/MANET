@@ -263,6 +263,44 @@ sudo ls -la /var/log/journal/
 
 After that survives a **reboot**, `journalctl -b -1 -k` can show the **previous** boot’s kernel log.
 
+## Capturing reset cause — phased plan (UART + optional ramoops)
+
+When the node **disappears** (watchdog, hang, power glitch), **SSH and disk logs often have nothing useful** from the last second. A **USB‑UART (3.3 V TTL)** on the CM4’s **primary UART** is the usual way to get a **smoking gun** (panic string, last `dmesg` line, or total silence before reset).
+
+### Phase 0 — Hardware (before first power-on with UART)
+
+- **Adapter:** **3.3 V** USB‑TTL (FTDI / CP2102 / CH340, etc.). **Do not** use 5 V UART on Pi GPIO.
+- **Wiring:** **GND ↔ GND**. **Pi TX → adapter RX** (often **GPIO 14** / **TXD0**). **Pi RX ← adapter TX** (often **GPIO 15** / **RXD0**). Confirm **pinout** for your **carrier** ([Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) maps these on the **40‑pin** header).
+- **Baud:** **115200 8N1** (matches typical `cmdline` **`console=serial0,115200`**).
+- **Safety:** Connect UART **before** power; avoid shorts. If the board **boots** with UART disconnected, you can attach **GND + TX** only first to **read** (one-way log) with less risk of wiring TX/RX wrong.
+
+### Phase 1 — Host PC: capture a full session
+
+1. Find the device: **`ls /dev/ttyUSB*`** or **`/dev/tty.usbserial-*`** (macOS).
+2. Open a terminal and **log everything** to a file. Examples: **`screen -L -Logfile ~/cm4-serial.log /dev/ttyUSB0 115200`** (adjust device path), or **minicom** with **capture** on, or **`sudo cat /dev/ttyUSB0`** after **`stty -F /dev/ttyUSB0 115200`** piped to **`tee ~/cm4-serial-$(date +%Y%m%d-%H%M).log`**.
+3. **Power the CM4** (or reset). You should see **bootloader / Linux** text immediately. If the screen is **blank**, swap **TX/RX** once (power off first), or check **GND** and **wrong voltage**.
+4. **Reproduce** the failure (mesh load, stress, wait for drop). **Do not** rely on SSH still working — the serial line is independent.
+
+### Phase 2 — What to look for in the log (“smoking gun” patterns)
+
+| Pattern | Likely meaning |
+|--------|----------------|
+| **`Kernel panic`**, **`Oops`**, **`BUG:`** | Software/driver fault; note the **stack trace** and module name (`mt7915e`, `batman_adv`, …). |
+| **Freeze** — log stops mid-line, then **reboot** with no panic | **Hard hang**, **power loss**, or **watchdog reset** without a clean panic path. |
+| **`watchdog`**, **`Watchdog did not stop`**, **`watchdog0`** | Interaction with **hardware watchdog**; pair with [`network-drops-60s.md`](network-drops-60s.md). |
+| **`mt7915e`**, **`timeout`**, **`-110`**, **`AER`**, **`irq`** | PCIe / NIC path; compare with **`pci=nomsi`** and power notes elsewhere in this doc. |
+| **Nothing** on serial, but **PWR LED** dies | **Supply** or **board** — use **inline USB meter** / different PSU, not more kernel flags. |
+
+Save the **raw `.log`**; it is evidence for forums / upstream.
+
+### Phase 3 — Optional: `ramoops` + `pstore` (panic survives reboot)
+
+If you get **panics** but serial was not connected, **ramoops** can store the **oops/panic** in a **reserved RAM** region and expose it after reboot under **`/sys/fs/pstore/`**. This requires **consistent `cmdline` + DT memory reservation** — treat as **advanced**; validate on a **spare** image. Search **“Linux ramoops raspberry pi”** for current examples matching your kernel.
+
+### Phase 4 — Debug-only watchdog relaxation
+
+To prove **“hang then WDT reset”** vs **“instant power loss”**, see **Mitigation A** in [`network-drops-60s.md`](network-drops-60s.md) (**disable systemd hardware watchdog** temporarily). **Only** with **serial** attached — otherwise a hang leaves a **brick** with no network.
+
 ### When the node is down (no SSH)
 
 - **Power / link:** cold cycle, Ethernet cable, PoE if applicable.
