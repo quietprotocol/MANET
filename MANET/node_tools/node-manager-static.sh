@@ -102,13 +102,22 @@ get_current_freq() {
 }
 
 ensure_static_channels() {
-    if [ ! -f "$WPA_CONF_2_4" ] || [ ! -f "$WPA_CONF_5_0" ]; then
-        log "Skipping static channel correction — missing $WPA_CONF_2_4 or $WPA_CONF_5_0 (radio-setup / mesh interfaces not ready)"
+    local mesh5
+    mesh5=$(grep -E '^mesh_use_5ghz=' /etc/mesh.conf 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+    mesh5=${mesh5:-y}
+
+    if [ ! -f "$WPA_CONF_2_4" ]; then
+        log "Skipping static channel correction — missing $WPA_CONF_2_4 (radio-setup / mesh not ready)"
+        return 0
+    fi
+    if [[ "$mesh5" != [Nn]* ]] && [ ! -f "$WPA_CONF_5_0" ]; then
+        log "Skipping static channel correction — missing $WPA_CONF_5_0 (radio-setup / mesh interfaces not ready)"
         return 0
     fi
 
     local freq_2_4=$(get_current_freq "$WPA_CONF_2_4")
-    local freq_5_0=$(get_current_freq "$WPA_CONF_5_0")
+    local freq_5_0=
+    [[ "$mesh5" != [Nn]* ]] && freq_5_0=$(get_current_freq "$WPA_CONF_5_0")
     
     local needs_restart=false
     
@@ -118,7 +127,7 @@ ensure_static_channels() {
         needs_restart=true
     fi
     
-    if [ "$freq_5_0" != "$STATIC_FREQ_5_0" ]; then
+    if [[ "$mesh5" != [Nn]* ]] && [ "$freq_5_0" != "$STATIC_FREQ_5_0" ]; then
         log "Correcting 5 GHz to static channel $STATIC_FREQ_5_0"
         sed -i "s/frequency=.*/frequency=${STATIC_FREQ_5_0}/" "$WPA_CONF_5_0"
         needs_restart=true
@@ -127,7 +136,9 @@ ensure_static_channels() {
     if [ "$needs_restart" = true ]; then
         log "Restarting wpa_supplicant services..."
         systemctl restart wpa_supplicant@wlan0.service
-        systemctl restart wpa_supplicant@wlan1.service
+        if [[ "$mesh5" != [Nn]* ]]; then
+            systemctl restart wpa_supplicant@wlan1.service
+        fi
         sleep 5
     fi
 }

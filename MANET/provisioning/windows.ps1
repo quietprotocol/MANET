@@ -846,6 +846,7 @@ acs=$($Script:AUTO_CHANNEL)
 regulatory_domain=$($Script:REGULATORY_DOMAIN)
 admin_password=$($Script:ADMIN_PW)
 auto_update=$($Script:AUTO_UPDATE)
+mesh_use_5ghz=y
 "@
         [System.IO.File]::WriteAllText((Join-Path $rootPath "etc\mesh.conf"), $meshConf.Replace("`r`n", "`n"))
 

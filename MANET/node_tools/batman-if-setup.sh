@@ -13,15 +13,28 @@ else
     exit 1
 fi
 
-# Find all the wireless network interfaces
-WLAN_INTERFACES=$(networkctl | awk '/wlan/ {print $2}' | tr '\n' ' ')
-
 # Read AP interface if configured, it will not be in the bat0 bridge
 AP_INTERFACE=""
 if [ -f /var/lib/ap_interface ]; then
     AP_INTERFACE=$(cat /var/lib/ap_interface)
     echo "AP interface detected: $AP_INTERFACE (will be excluded from batman mesh)"
 fi
+
+# Interfaces for bat0: prefer /var/lib/mesh_if (from radio-setup) so mesh_use_5ghz=n
+# excludes 5 GHz mesh from Batman even if wlan1 exists (e.g. for AP).
+WLAN_INTERFACES=""
+if [ -s /var/lib/mesh_if ]; then
+    while read -r w; do
+        [ -z "$w" ] && continue
+        if [ -n "$AP_INTERFACE" ] && [ "$w" = "$AP_INTERFACE" ]; then
+            continue
+        fi
+        WLAN_INTERFACES="$WLAN_INTERFACES $w"
+    done < /var/lib/mesh_if
+else
+    WLAN_INTERFACES=$(networkctl | awk '/wlan/ {print $2}' | tr '\n' ' ')
+fi
+echo "Batman mesh interfaces:${WLAN_INTERFACES:- (none)}"
 
 start() {
     echo "Starting BATMAN-ADV setup..."

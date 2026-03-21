@@ -114,6 +114,7 @@ sleep 2
 # batman-enslave fails with "Mesh configuration /etc/default/mesh not found".
 if [[ -n "${MESH_NAME:-}" ]]; then
     echo "MESH_NAME=\"$MESH_NAME\"" > /etc/default/mesh
+    echo "mesh_use_5ghz=\"${mesh_use_5ghz:-y}\"" >> /etc/default/mesh
 fi
 
 #
@@ -217,7 +218,13 @@ for iface in "${mesh_ifaces[@]}"; do
         mesh_5+=("$iface")
     fi
 done
-mesh_ifaces=("${mesh_24[@]}" "${mesh_5[@]}")
+mesh_use_5ghz=${mesh_use_5ghz:-y}
+if [[ "$mesh_use_5ghz" =~ ^[Nn]$ ]]; then
+    mesh_ifaces=("${mesh_24[@]}")
+    echo " > mesh_use_5ghz=n: mesh backhaul on 2.4 GHz only (5 GHz mesh link disabled)"
+else
+    mesh_ifaces=("${mesh_24[@]}" "${mesh_5[@]}")
+fi
 
 # Create directory and files (supports wired-only configs if arrays are empty)
 mkdir -p /var/lib
@@ -358,6 +365,14 @@ EOF
     systemctl enable wpa_supplicant@$WLAN.service
     ((CT++))
 done
+
+# mesh_use_5ghz=n: no mesh on 5 GHz — prevent wpa_supplicant@wlan1 from starting
+if [[ "${mesh_use_5ghz:-y}" =~ ^[Nn]$ ]]; then
+    systemctl disable --now wpa_supplicant@wlan1.service 2>/dev/null || true
+    systemctl mask wpa_supplicant@wlan1.service 2>/dev/null || true
+else
+    systemctl unmask wpa_supplicant@wlan1.service 2>/dev/null || true
+fi
 
 # ============================================================================
 # === CONFIGURE AP INTERFACE (if wireless/auto mode) ===

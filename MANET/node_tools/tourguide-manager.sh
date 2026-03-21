@@ -116,6 +116,14 @@ elect_tourguide() {
 
 select_tourguide_radio() {
     local MY_MAC=$1
+    local mesh5
+    mesh5=$(grep -E '^mesh_use_5ghz=' /etc/mesh.conf 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+    mesh5=${mesh5:-y}
+    if [[ "$mesh5" == [Nn]* ]]; then
+        echo "wlan0"
+        return
+    fi
+
     local MAC_SANITIZED=$(echo "$MY_MAC" | tr -d ':')
     local RADIO_VAR="NODE_${MAC_SANITIZED}_LAST_TOURGUIDE_RADIO"
 

@@ -137,8 +137,18 @@ get_current_freq() {
 }
 
 is_in_lobby() {
+    local mesh5
+    mesh5=$(grep -E '^mesh_use_5ghz=' /etc/mesh.conf 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+    mesh5=${mesh5:-y}
+
     local freq_2_4=$(get_current_freq "$WPA_CONF_2_4")
-    local freq_5_0=$(get_current_freq "$WPA_CONF_5_0")
+    local freq_5_0=
+    [[ "$mesh5" != [Nn]* ]] && freq_5_0=$(get_current_freq "$WPA_CONF_5_0")
+
+    if [[ "$mesh5" == [Nn]* ]]; then
+        [[ "$freq_2_4" == "$LOBBY_FREQ_2_4" ]] && echo "true" || echo "false"
+        return
+    fi
 
     if [[ "$freq_2_4" == "$LOBBY_FREQ_2_4" && "$freq_5_0" == "$LOBBY_FREQ_5_0" ]]; then
         echo "true"
@@ -148,23 +158,42 @@ is_in_lobby() {
 }
 
 return_to_lobby() {
-    if [ ! -f "$WPA_CONF_2_4" ] || [ ! -f "$WPA_CONF_5_0" ]; then
+    local mesh5
+    mesh5=$(grep -E '^mesh_use_5ghz=' /etc/mesh.conf 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+    mesh5=${mesh5:-y}
+
+    if [ ! -f "$WPA_CONF_2_4" ]; then
         log "Cannot return to lobby — missing wpa_supplicant conf (radio-setup / wlan not ready)"
+        return 1
+    fi
+    if [[ "$mesh5" != [Nn]* ]] && [ ! -f "$WPA_CONF_5_0" ]; then
+        log "Cannot return to lobby — missing 5 GHz wpa conf"
         return 1
     fi
     log "Returning to lobby channels..."
     sed -i "s/frequency=.*/frequency=${LOBBY_FREQ_2_4}/" "$WPA_CONF_2_4"
-    sed -i "s/frequency=.*/frequency=${LOBBY_FREQ_5_0}/" "$WPA_CONF_5_0"
+    if [[ "$mesh5" != [Nn]* ]]; then
+        sed -i "s/frequency=.*/frequency=${LOBBY_FREQ_5_0}/" "$WPA_CONF_5_0"
+    fi
     systemctl restart wpa_supplicant@wlan0.service
-    systemctl restart wpa_supplicant@wlan1.service
+    if [[ "$mesh5" != [Nn]* ]]; then
+        systemctl restart wpa_supplicant@wlan1.service
+    fi
     sleep 5
 }
 
 perform_scan() {
+    local mesh5
+    mesh5=$(grep -E '^mesh_use_5ghz=' /etc/mesh.conf 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+    mesh5=${mesh5:-y}
+
     local json_out='{"results": ['
     local first_entry=true
 
-    for iface in "wlan0" "wlan1"; do
+    local scan_ifaces="wlan0"
+    [[ "$mesh5" != [Nn]* ]] && scan_ifaces="wlan0 wlan1"
+
+    for iface in $scan_ifaces; do
         local freqs_to_scan=""
         [ "$iface" == "wlan0" ] && freqs_to_scan=$SCAN_FREQS_2_4
         [ "$iface" == "wlan1" ] && freqs_to_scan=$SCAN_FREQS_5_0
@@ -338,17 +367,31 @@ while true; do
         if [ -n "$HELPER_PAYLOAD" ]; then
             eval $("/usr/local/bin/decoder.py" "$HELPER_PAYLOAD" 2>/dev/null | grep "DATA_CHANNEL_")
 
-            if [[ -n "$DATA_CHANNEL_2_4" && -n "$DATA_CHANNEL_5_0" ]]; then
-                log "Helper beacon received. Migrating to data channels: 2.4=${DATA_CHANNEL_2_4}, 5=${DATA_CHANNEL_5_0}"
+            MESH5_HELPER=$(grep -E '^mesh_use_5ghz=' /etc/mesh.conf 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+            MESH5_HELPER=${MESH5_HELPER:-y}
 
-                if [ -f "$WPA_CONF_2_4" ] && [ -f "$WPA_CONF_5_0" ]; then
-                    sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_2_4}/" "$WPA_CONF_2_4"
-                    sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_5_0}/" "$WPA_CONF_5_0"
-                    systemctl restart wpa_supplicant@wlan0.service
-                    systemctl restart wpa_supplicant@wlan1.service
-                    sleep 5
-                else
-                    log "Skipping channel migration — wpa_supplicant conf not present"
+            if [[ -n "$DATA_CHANNEL_2_4" && ( -n "$DATA_CHANNEL_5_0" || "$MESH5_HELPER" == [Nn]* ) ]]; then
+                if [[ "$MESH5_HELPER" == [Nn]* ]]; then
+                    log "Helper beacon received. Migrating 2.4 GHz only (mesh_use_5ghz=n): ${DATA_CHANNEL_2_4}"
+                    if [ -f "$WPA_CONF_2_4" ]; then
+                        sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_2_4}/" "$WPA_CONF_2_4"
+                        systemctl restart wpa_supplicant@wlan0.service
+                        sleep 5
+                    else
+                        log "Skipping channel migration — wpa_supplicant conf not present"
+                    fi
+                elif [[ -n "$DATA_CHANNEL_5_0" ]]; then
+                    log "Helper beacon received. Migrating to data channels: 2.4=${DATA_CHANNEL_2_4}, 5=${DATA_CHANNEL_5_0}"
+
+                    if [ -f "$WPA_CONF_2_4" ] && [ -f "$WPA_CONF_5_0" ]; then
+                        sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_2_4}/" "$WPA_CONF_2_4"
+                        sed -i "s/frequency=.*/frequency=${DATA_CHANNEL_5_0}/" "$WPA_CONF_5_0"
+                        systemctl restart wpa_supplicant@wlan0.service
+                        systemctl restart wpa_supplicant@wlan1.service
+                        sleep 5
+                    else
+                        log "Skipping channel migration — wpa_supplicant conf not present"
+                    fi
                 fi
             fi
         fi

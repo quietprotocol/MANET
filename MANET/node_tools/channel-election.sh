@@ -68,6 +68,9 @@ get_current_freq() {
 
     NOW=$(date +%s)
 
+    MESH_USE_5GHZ=$(grep -E '^mesh_use_5ghz=' /etc/mesh.conf 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
+    MESH_USE_5GHZ=${MESH_USE_5GHZ:-y}
+
     # 1. Aggregate all *active* scan reports from the registry
     ALL_REPORTS_JSON=$(awk -F"['=]" \
         -v now="$NOW" -v stale="$STALE_THRESHOLD" \
@@ -185,7 +188,12 @@ get_current_freq() {
 
     # --- Run Elections ---
     WINNER_2_4=$(find_best_channel "$CHANNELS_2_4" "$CURRENT_2_4" "2.4GHz")
-    WINNER_5_0=$(find_best_channel "$CHANNELS_5_0" "$CURRENT_5_0" "5.0GHz")
+    if [[ "$MESH_USE_5GHZ" == [Nn]* ]]; then
+        WINNER_5_0=""
+        log "mesh_use_5ghz=n — skipping 5 GHz channel election"
+    else
+        WINNER_5_0=$(find_best_channel "$CHANNELS_5_0" "$CURRENT_5_0" "5.0GHz")
+    fi
 
     # --- Write Output File (for node-manager) ---
     cat > "$OUTPUT_FILE" <<- EOF

@@ -917,6 +917,7 @@ acs=${AUTO_CHANNEL}
 regulatory_domain=${REGULATORY_DOMAIN}
 admin_password=${ADMIN_PW}
 auto_update=${AUTO_UPDATE}
+mesh_use_5ghz=y
 EOF
 
         # ============================================================

@@ -73,7 +73,8 @@ Elects which node hosts the Mumble (Murmur) voice server.
 
 **channel-election.sh**
 
-Decentralized election for optimal 2.4GHz and 5GHz channels.
+Decentralized election for optimal 2.4 GHz and 5 GHz channels. If **`mesh_use_5ghz=n`** in **`/etc/mesh.conf`**, 5 GHz election is skipped (2.4 GHz–only mesh backhaul).
+
 - Aggregates scan reports from all nodes via the registry.
 - Scores channels based on noise floor and BSS count.
 - Falls back to lobby channels if all options are jammed.

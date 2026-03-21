@@ -41,6 +41,7 @@ Reference for future sessions. Last updated from checks against a **Raspberry Pi
   - [What to avoid on mesh backhaul](#what-to-avoid-on-mesh-backhaul)
   - [What is not really tunable from userspace](#what-is-not-really-tunable-from-userspace)
   - [Making TX caps persistent](#making-tx-caps-persistent)
+  - [Single-band mesh backhaul (disable 5 GHz)](#single-band-mesh-backhaul-disable-5-ghz)
 - [Bench update: U.FL / IPEX antenna (CM4108032 — onboard Wi‑Fi only)](#bench-update-ufl--ipex-antenna-cm4108032--onboard-wi%E2%80%91fi-only)
 - [Capturing reset cause — phased plan (UART + optional ramoops)](#capturing-reset-cause--phased-plan-uart--optional-ramoops)
   - [Phase 0 — Hardware (before first power-on with UART)](#phase-0--hardware-before-first-power-on-with-uart)
@@ -391,6 +392,18 @@ The **main knob you control in software** is **transmit power**. The driver/firm
 ### Making TX caps persistent
 
 After you pick values that **still close the mesh**, mirror the existing **`ap-txpower.service`** pattern: **oneshot** **`iw dev <iface> set txpower fixed …`**, **`After=`** / **`BindsTo=`** the right **`sys-subsystem-net-devices-<iface>.device`**, enable the unit. Order it **after** whatever unit brings the interface to **mesh point** type, or use a small **ExecStartPre** delay / script that waits until **`iw dev`** shows the mesh iface — otherwise **`iw`** may run too early.
+
+### Single-band mesh backhaul (disable 5 GHz)
+
+DBDC modules (e.g. **AW7916-AED**) expose **two** mesh interfaces (typically **`wlan0`** ≈ 2.4 GHz, **`wlan1`** ≈ 5 GHz). To run **mesh only on 2.4 GHz** (fewer chains / less load on the card — useful when isolating **PCIe / `mt7915e`** issues), **on the node**:
+
+1. In **`/etc/mesh.conf`**, set a single line **`mesh_use_5ghz=n`** (edit in place; remove duplicates if any).
+2. **`sudo bash /usr/local/bin/radio-setup.sh`**
+3. **`sudo reboot`**
+
+**`radio-setup.sh`** must be the version that reads **`mesh_use_5ghz`** (see this repo’s **`MANET/node_tools/radio-setup.sh`**). If your image is older, copy that file to **`/usr/local/bin/radio-setup.sh`** first, then repeat steps 1–3.
+
+Provisioning defaults **`mesh_use_5ghz=y`**. With **`n`**, mesh leaves **`wlan1`** out of **`/var/lib/mesh_if`**, **masks** **`wpa_supplicant@wlan1`**, and the node-manager / channel-election / tourguide paths skip 5 GHz mesh. **Peers that only mesh on 5 GHz will not see you.** If **`eud=wireless`**, the AP may still use **`wlan1`** for a **5 GHz** EUD AP when it is not used for mesh — test your layout.
 
 ---
 
