@@ -4,7 +4,43 @@ Reference for future sessions. Last updated from checks against a **Raspberry Pi
 
 ### Current bench profile (read this first)
 
-Recent CM4 bench nodes target **mesh backhaul on PCIe M.2 only** (**[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** + [AliExpress M.2 adapter](https://www.aliexpress.com/item/4000175123887.html?spm=a2g0o.order_list.order_list_main.66.787318027rHYJu) in [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) **M-key** slot): **`dtoverlay=disable-wifi`** (onboard SDIO Wi-Fi off), **Morse SPI / HaLow and camera autoload off** in `config.txt`, and **Morse modules blacklisted** where applied. On that profile, **skip `mmc1` / `brcmfmac` / CM4 U.FL** troubleshooting unless you re-enable onboard Wi-Fi.
+Recent CM4 bench nodes target **mesh backhaul on PCIe M.2 only** (**[524WiFi AW7916-AED](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)** + [AliExpress M.2 adapter](https://www.aliexpress.com/item/4000175123887.html?spm=a2g0o.order_list.order_list_main.66.787318027rHYJu) in [Waveshare CM4-IO-BASE-B](https://www.waveshare.com/cm4-io-base-b.htm) **M-key** slot): **`dtoverlay=disable-wifi`** (onboard SDIO Wi-Fi off), **Morse SPI / HaLow and camera autoload off** in `config.txt`, and **Morse modules blacklisted** where applied. On that profile, **skip `mmc1` / `brcmfmac` / CM4 U.FL** troubleshooting unless you re-enable onboard Wi-Fi. **Copy-paste overlays and `cmdline` tokens** for this profile are in the next subsection.
+
+### CM4 M.2 bench (config.txt and cmdline.txt reference)
+
+Canonical **one-place** layout for the **PCIe M.2–only** bench stack (overlays + kernel flags) used elsewhere in this doc. On **Bookworm** images, firmware lives under **`/boot/firmware/`**. **Section headers matter:** **`[cm4]`** applies only to **Compute Module 4**; lines under **`[pi4]`** / **`[pi3]`** / **`[pi0w]`** do **not** apply to a CM4.
+
+**`/boot/firmware/config.txt` — `[cm4]`**
+
+```ini
+[cm4]
+dtoverlay=pcie-32bit-dma
+dtoverlay=disable-wifi
+dtoverlay=disable-bt
+```
+
+| Line | Role |
+|------|------|
+| **`dtoverlay=pcie-32bit-dma`** | Prefer **32-bit DMA** for some PCIe devices on the CM4 host; pair with PCIe / **`mt7915e`** triage in [`network-drops-60s.md`](network-drops-60s.md) and **SError** notes under **Capturing reset cause — phased plan (UART + optional ramoops)** (later in this doc). |
+| **`dtoverlay=disable-wifi`** | Onboard **SDIO** Wi‑Fi off so mesh uses **M.2** only. |
+| **`dtoverlay=disable-bt`** | Onboard **Bluetooth** off; must sit under **`[cm4]`** (see **Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled** below). |
+
+**`/boot/firmware/config.txt` — `[all]`** (or keep only one of `[all]` / `[cm4]` if you merge sections — `ramoops` is often placed under `[all]`)
+
+```ini
+[all]
+dtoverlay=ramoops
+```
+
+Optional larger ring buffer (defaults and tuning are documented under **Phase 3 — ramoops + pstore** in **Capturing reset cause** below):
+
+```ini
+dtoverlay=ramoops,total-size=0x100000
+```
+
+**`/boot/firmware/cmdline.txt`** — **not** `config.txt`: append **`pci=nomsi`** (single space–separated token on the **same line** as existing options). Mitigates some **MSI / IRQ** behaviour with PCIe NICs; see [CM4 datasheet §2.3](https://pip-assets.raspberrypi.com/categories/634-raspberry-pi-compute-module-4/documents/RP-008168-DS-2-cm4-datasheet.pdf) excerpt, **PCIe IRQ #26 / AER** / mitigations later in this doc, and [`network-drops-60s.md`](network-drops-60s.md).
+
+**Also on bench images (not duplicated as overlays above):** comment out or omit **Morse / HaLow / camera** `dtoverlay` lines shipped by the MANET tarball when you run **M.2-only** — use the same **`grep`** patterns as [`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh) (`morse`, `mm610`, `spi`, `camera`, `sdio`). **`dtparam=ant1`** / **`ant2`** only affect **onboard** CM4 RF when SDIO Wi‑Fi is enabled; with **`disable-wifi`**, they are usually irrelevant for the **PCIe** `wlan*` mesh path.
 
 ## Hardware assumptions
 
@@ -109,7 +145,7 @@ lsusb
 
 ## Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled
 
-**CM4 (this project)** uses the standard Raspberry Pi firmware overlays **`dtoverlay=disable-wifi`** and, when you want Bluetooth off too, **`dtoverlay=disable-bt`**. They live in **`/boot/firmware/config.txt`** (Bookworm-era layout).
+**CM4 (this project)** uses the standard Raspberry Pi firmware overlays **`dtoverlay=disable-wifi`** and, when you want Bluetooth off too, **`dtoverlay=disable-bt`**. They live in **`/boot/firmware/config.txt`** (Bookworm-era layout). The full **`[cm4]` + `[all]` + `cmdline.txt`** bench layout is in **[CM4 M.2 bench (config.txt and cmdline.txt reference)](#cm4-m2-bench-configtxt-and-cmdlinetxt-reference)** (earlier in this doc).
 
 **Important:** Put **`dtoverlay=disable-bt`** under the **`[cm4]`** section. Entries under **`[pi4]`** / **`[pi3]`** / **`[pi0w]`** do **not** apply to a Compute Module 4 — a common mistake is **`hci0`** still appearing after reboot because **`disable-bt`** was only set for other Pi models.
 
@@ -307,7 +343,7 @@ Save the **raw `.log`**; it is evidence for forums / upstream.
 
 Raspberry Pi OS ships a **device-tree overlay** that reserves a small RAM region and registers **ramoops**. After a **panic/oops**, the next boot can expose dumps under **`/sys/fs/pstore/`**; **systemd-pstore** (enabled on typical Pi OS images) may also copy them to **`/var/lib/systemd/pstore/`**.
 
-**1. Enable the overlay** in **`/boot/firmware/config.txt`** (e.g. under **`[all]`** or **`[cm4]`**):
+**1. Enable the overlay** in **`/boot/firmware/config.txt`** (e.g. under **`[all]`** or **`[cm4]`**). For how **`ramoops`** sits next to **`pcie-32bit-dma`** / **`disable-wifi`**, see **[CM4 M.2 bench (config.txt and cmdline.txt reference)](#cm4-m2-bench-configtxt-and-cmdlinetxt-reference)** (earlier in this doc).
 
 ```ini
 dtoverlay=ramoops
