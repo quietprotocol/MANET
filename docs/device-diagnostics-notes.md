@@ -97,6 +97,35 @@ iw reg get
 lsusb
 ```
 
+## Verifying onboard CM4 Wi‑Fi / Bluetooth are disabled
+
+**CM4 (this project)** uses the standard Raspberry Pi firmware overlays **`dtoverlay=disable-wifi`** and, when you want Bluetooth off too, **`dtoverlay=disable-bt`**. They live in **`/boot/firmware/config.txt`** (Bookworm-era layout).
+
+A [Home Assistant community thread](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312) discusses disabling SDIO radios; **[post 11](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312/11)** is about **Raspberry Pi 5**, which needs different overlay names (**`disable-wifi-pi5`** / **`disable-bt-pi5`**) and sometimes **manually adding** `.dtbo` files. **Do not** mix Pi 5 overlay names into a **CM4** `config.txt` unless you are actually on a Pi 5.
+
+### What “disabled” should look like
+
+| Check | Onboard Wi‑Fi disabled | Onboard BT disabled |
+|--------|-------------------------|----------------------|
+| **Firmware** | `grep -E 'disable-wifi' /boot/firmware/config.txt` shows **`dtoverlay=disable-wifi`** (not commented) | Same for **`dtoverlay=disable-bt`** |
+| **Driver** | **`brcmfmac`** does **not** appear in **`lsmod`** (SDIO WLAN block not brought up) | No **Bluetooth HCI** device; **`/sys/class/bluetooth`** empty or missing |
+| **Runtime** | No **Broadcom SDIO `wlan*`** from **`iw dev`** / **`iw phy`** (only your **M.2** PHYs appear) | **`rfkill list`** has no Bluetooth controller, or **`hciconfig`** / **`bluetoothctl list`** show nothing (tools may be absent on minimal images) |
+| **`dmesg`** | No successful **`brcmfmac`** / **CYW43455** attach; **`mmc1`** may still log on some builds — interpret together with **`disable-wifi`** | No **`hci0`** registration from the SDIO/BT side |
+
+**[`mesh-node-diagnostics.sh`](mesh-node-diagnostics.sh)** prints **`config.txt` lines** (including **`disable-bt`**), **`lsmod`** for **`brcmf`**, short **`dmesg`** hints, **`rfkill`**, and Bluetooth sysfs so you can confirm in one capture.
+
+### Quick manual check
+
+```bash
+grep -nE 'disable-wifi|disable-bt' /boot/firmware/config.txt
+lsmod | grep -E '^brcmf' || echo "no brcmfmac loaded"
+iw dev
+ls /sys/class/bluetooth 2>/dev/null || echo "no Bluetooth class devices"
+rfkill list 2>/dev/null
+```
+
+If **`disable-wifi`** is set but you still see **`brcmfmac`** and an SDIO **`wlan`**, the overlay is not active (wrong partition, typo, or **`config.txt`** not read — e.g. empty file).
+
 ## Lowering M.2 Wi‑Fi power (`mt7915e` / AW7916)
 
 The **main knob you control in software** is **transmit power**. The driver/firmware still burns **baseline current** for PCIe, baseband, and the second DBDC chain; **vendor peak (~8 W)** is mostly **PA + processing under load**, not something you eliminate entirely without turning the interface off.

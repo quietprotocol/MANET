@@ -19,7 +19,17 @@ echo "=== boot cmdline (pci=nomsi?) ==="
 cat /boot/firmware/cmdline.txt 2>/dev/null || echo "(no /boot/firmware/cmdline.txt)"
 
 echo "=== config.txt (radio-related lines) ==="
-grep -nE '^\[|disable-wifi|pcie-32bit|morse|mm610|spi=|camera|sdio' /boot/firmware/config.txt 2>/dev/null | head -40 || echo "(no config.txt)"
+grep -nE '^\[|disable-wifi|disable-bt|pcie-32bit|morse|mm610|spi=|camera|sdio' /boot/firmware/config.txt 2>/dev/null | head -40 || echo "(no config.txt)"
+
+echo "=== onboard CM4 SDIO Wi-Fi / BT (disabled = no brcmf / no hci) ==="
+lsmod 2>/dev/null | grep -E '^brcmf' || echo "(no brcmfmac — expected if disable-wifi)"
+dmesg 2>/dev/null | grep -iE 'brcmf|cyw43455|Bluetooth hci' | tail -15 || true
+if [ -d /sys/class/bluetooth ]; then
+  ls -1 /sys/class/bluetooth 2>/dev/null || true
+else
+  echo "(no /sys/class/bluetooth — BT likely off or no driver)"
+fi
+rfkill list 2>/dev/null | head -25 || true
 
 echo "=== wireless / bridge ==="
 iw dev 2>/dev/null
