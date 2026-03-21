@@ -101,6 +101,8 @@ lsusb
 
 **CM4 (this project)** uses the standard Raspberry Pi firmware overlays **`dtoverlay=disable-wifi`** and, when you want Bluetooth off too, **`dtoverlay=disable-bt`**. They live in **`/boot/firmware/config.txt`** (Bookworm-era layout).
 
+**Important:** Put **`dtoverlay=disable-bt`** under the **`[cm4]`** section. Entries under **`[pi4]`** / **`[pi3]`** / **`[pi0w]`** do **not** apply to a Compute Module 4 — a common mistake is **`hci0`** still appearing after reboot because **`disable-bt`** was only set for other Pi models.
+
 A [Home Assistant community thread](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312) discusses disabling SDIO radios; **[post 11](https://community.home-assistant.io/t/disabling-built-in-wi-fi-bluetooth-from-raspberry-pi-cm4-on-home-assistant-yellow/644312/11)** is about **Raspberry Pi 5**, which needs different overlay names (**`disable-wifi-pi5`** / **`disable-bt-pi5`**) and sometimes **manually adding** `.dtbo` files. **Do not** mix Pi 5 overlay names into a **CM4** `config.txt` unless you are actually on a Pi 5.
 
 ### What “disabled” should look like
