@@ -24,11 +24,16 @@ disable_overscan=1
 
 dtparam=i2c_arm=off
 
+# Headless mesh: minimal GPU RAM (16 MB is the usual floor for Pi 4 / CM4).
 # How much memory in MB to assign to the GPU on Pi models having
 # 256, 512 or 1024 MB total memory
-gpu_mem_256=128
-gpu_mem_512=128
-gpu_mem_1024=128
+gpu_mem_256=16
+gpu_mem_512=16
+gpu_mem_1024=16
+# 2GB / 4GB / 8GB CM4 SKUs (add if missing on your image)
+gpu_mem_2048=16
+gpu_mem_4096=16
+gpu_mem_8192=16
 
 # enable uart
 uart_enable=1
