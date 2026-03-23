@@ -32,6 +32,8 @@ Revert by removing that drop-in and `daemon-reload` + reboot.
 
 You’ve seen **`probe failed error -110`** (firmware talk timeout) and sometimes **`-12` (ENOMEM)** during probe. **`dmesg`** may show **`irq 26: nobody cared`** / **`Disabling IRQ #26`** (PCIe **AER** on CM4) right before **`mt7915e` fails** — try **`pci=nomsi`** in `/boot/firmware/cmdline.txt` (see [`device-diagnostics-notes.md`](device-diagnostics-notes.md)). **Full power-off** (not soft reboot) often recovers. For development: **reseating** the **module and M.2 adapter**, **3.3 V / PSU headroom** (see [AW7916-AED power notes](https://524wifi.net/product/524wifi-wifi6e-3000-802-11ax-g-band-2t2r-a-band-3t3r-2ss-dual-bands-dual-concurrent-dbdc-m-2-aw7916-aed-mediatek-mt7916an-524wifi/)), **heatsink**, and **kernel/firmware** updates.
 
+**Not the same as “~60s drop”:** A **`Kernel panic - not syncing: Asynchronous SError Interrupt`** with stack through **`mt7915_update_channel`** / **`mt7915_mac_work`** (often **`phy2`**) is a **documented ramoops capture** — driver/MMIO on the **MediaTek** path, not systemd’s **60s hardware watchdog** firing on a silent hang. See **[Example capture (field): … mt7915_update_channel …](device-diagnostics-notes.md#example-capture-field-asynchronous-serror-during-mt7915_update_channel-phy2-mt7915_mac_work)** in `device-diagnostics-notes.md`.
+
 ## Mitigation C — empty / broken mesh files
 
 If `/etc/default/mesh` or `wpa_supplicant-wlan*.conf` are **0 bytes**, services can misbehave. Restore from `/etc/mesh.conf` (see `device-diagnostics-notes.md`) or re-run **`radio-setup.sh`** when the link is stable.

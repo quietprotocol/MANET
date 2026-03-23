@@ -50,6 +50,7 @@ Reference for future sessions. Last updated from checks against a **Raspberry Pi
   - [Phase 2 — What to look for in the log (“smoking gun” patterns)](#phase-2--what-to-look-for-in-the-log-smoking-gun-patterns)
   - [Phase 3 — `ramoops` + `pstore` (no UART required)](#phase-3--ramoops--pstore-no-uart-required)
   - [Example capture (bench): `Asynchronous SError` during `mt7915_init_work`](#example-capture-bench-asynchronous-serror-during-mt7915_init_work)
+  - [Example capture (field): Asynchronous SError during mt7915_update_channel (phy2, mt7915_mac_work)](#example-capture-field-asynchronous-serror-during-mt7915_update_channel-phy2-mt7915_mac_work)
   - [Phase 4 — Debug-only watchdog relaxation](#phase-4--debug-only-watchdog-relaxation)
   - [When the node is down (no SSH)](#when-the-node-is-down-no-ssh)
 - [Mesh stack (symptoms vs fixes in-tree)](#mesh-stack-symptoms-vs-fixes-in-tree)
@@ -535,7 +536,28 @@ On a **CM4** with **PCIe M.2** **`14c3:7906`** / **`mt7915e`** (e.g. **AW7916-AE
 
 So the fault was an **SError** on **MMIO** to the radio **during deferred MAC init**, not a mesh script failure. Triage weights **PCIe link / M.2 power & seating / `pci=nomsi` / `pcie-32bit-dma` / PSU** (see [`network-drops-60s.md`](network-drops-60s.md)); use the **pstore file** (sanitized) when opening **[raspberrypi/linux](https://github.com/raspberrypi/linux)** or **[openwrt/mt76](https://github.com/openwrt/mt76)** issues.
 
-**Note:** Separate incidents have also shown **SError** / panic in **`mt7915_rr`** / **`mt7915_update_channel`** (channel programming path) — same triage lens (**PCIe, power, seating, `pci=nomsi`, `pcie-32bit-dma`**).
+### Example capture (field): Asynchronous SError during mt7915_update_channel (phy2, mt7915_mac_work)
+
+Field capture from **mesh-582a**, **Raspberry Pi Compute Module 4 Rev 1.1**, **PCIe `14c3:7906`** / **`mt7915e`** (524WiFi AW7916-AED class), kernel **6.6.78-exp+**, as saved in **ramoops** / pstore (**`dmesg-ramoops-0`**; after boot also check **`/var/lib/systemd/pstore/`** if **`/sys/fs/pstore/`** is empty — **`systemd-pstore`** may have moved the dump).
+
+| Field | Detail |
+|--------|--------|
+| **Wall-clock note** | Capture may be titled **`Panic#1 Part1`** in the pager; content is **kernel log from the panicking boot**, not live `dmesg`. |
+| **Time after boot** | ~**101 s** |
+| **Comm / CPU** | **`kworker/u8:0`**, CPU **0** |
+| **SError** | `SError Interrupt on CPU0, code 0x00000000bf000002` |
+| **Panic** | `Kernel panic - not syncing: Asynchronous SError Interrupt` |
+| **Workqueue** | **`phy2 mt7915_mac_work [mt7915e]`** |
+
+**Call trace (abbrev.):** `mt76_mmio_rr` `[mt76]` → `__mt7915_reg_remap_addr` / `mt7915_rr` `[mt7915e]` → **`mt7915_update_channel`** → `mt76_update_survey` `[mt76]` → **`mt7915_mac_work`** `[mt7915e]` → `process_one_work` → `worker_thread`.
+
+**Interpretation:** **SError** on **MMIO** in the **channel update / survey / MAC worker** path — **driver/hardware**, not mesh userspace. On **DBDC** **`mt7915e`**, **`phy2`** is often the **second** PHY (frequently **5 GHz**); trying **[single-band mesh](#single-band-mesh-backhaul-disable-5-ghz)** (`mesh_use_5ghz=n`) is a valid **isolation** experiment (peers that only use 5 GHz mesh will not see the node).
+
+**Same-boot context:** **`batman_adv`** logged many **`bat0: Interface deactivated: wlan0` / `activated: wlan0`** lines in the lead-up — likely **correlated** (more MAC/survey work), not evidence that BATMAN is the root cause.
+
+**Triage:** Same lens as the **`mt7915_init_work`** case and the **M.2 Wi‑Fi module (524WiFi AW7916-AED)** section earlier in this document: **reseat module and adapter**, **cold** power cycle, **PSU / 3.3 V** headroom, **heatsink**, **`pci=nomsi`** + **`pcie-32bit-dma`**, optional **diagnostic** **`irqpoll`**; newer **kernel / `mt76` / NIC firmware**; **upstream** issue with **sanitized pstore** attached.
+
+**vs. ~60 s watchdog:** This incident is a **panic with stack**; it is **not** the “silent hang then **Broadcom WDT** reset” pattern described in [`network-drops-60s.md`](network-drops-60s.md) (those may still occur on other boots).
 
 ### Phase 4 — Debug-only watchdog relaxation
 
