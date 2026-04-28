@@ -1798,14 +1798,16 @@ if ! has_usb_morse_device && ! has_morse_netdev; then
     done
 fi
 
-# Use external antenna for onboard WiFi (brcmfmac) if present
+# Onboard brcmfmac antenna path (CM4 SDIO WiFi): ant1 = PCB, ant2 = U.FL
 if ls /sys/bus/sdio/drivers/brcmfmac/*/net 2>/dev/null | grep -q .; then
     for _cfg in /boot/firmware/config.txt /boot/config.txt; do
         [ -f "$_cfg" ] || continue
-        if ! grep -q '^dtparam=ant2$' "$_cfg"; then
-            echo "dtparam=ant2" >> "$_cfg"
-            echo " > External U.FL antenna (dtparam=ant2) enabled in $_cfg"
+        if grep -q '^dtparam=ant1$' "$_cfg"; then
+            continue
         fi
+        sed -i '/^dtparam=ant[12]$/d' "$_cfg"
+        echo "dtparam=ant1" >> "$_cfg"
+        echo " > Onboard PCB antenna (dtparam=ant1) set in $_cfg"
     done
 fi
 
