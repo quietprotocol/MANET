@@ -926,6 +926,40 @@ else
     echo " > Interface names already match desired layout, no rename needed"
 fi
 
+# 5 GHz mesh channel width (MHz). Matches wpa_supplicant max_oper_chwidth:
+# 40 -> 0 (CONF_OPER_CHWIDTH_USE_HT / VHT_CHANWIDTH_USE_HT, cap at HT40)
+# 80 -> 1 (80 MHz), 160 -> 2, 80+80 -> 3. See wpa_supplicant ssid_fields INT_RANGE.
+MESH_5_CHANNEL="${mesh_5_channel:-36}"
+MESH_5_BW="${mesh_5_bw:-80}"
+
+wifi_5g_channel_to_freq() {
+    case "$1" in
+        36) echo 5180 ;;
+        40) echo 5200 ;;
+        44) echo 5220 ;;
+        48) echo 5240 ;;
+        149) echo 5745 ;;
+        153) echo 5765 ;;
+        157) echo 5785 ;;
+        161) echo 5805 ;;
+        165) echo 5825 ;;
+        *) echo "" ;;
+    esac
+}
+
+mesh_wpa_max_oper_chwidth_for_5ghz() {
+    case "$MESH_5_BW" in
+        40) echo 0 ;;
+        80) echo 1 ;;
+        160) echo 2 ;;
+        8080|80p80|80+80) echo 3 ;;
+        *)
+            echo " > WARNING: mesh_5_bw=$MESH_5_BW invalid (use 40|80|160|8080); defaulting to 80" >&2
+            echo 1
+            ;;
+    esac
+}
+
 for WLAN in $(cat /var/lib/mesh_if); do
     # Skip this interface if it's the AP interface
     if [[ -n "$AP_INTERFACE" ]] && [[ "$WLAN" == "$AP_INTERFACE" ]]; then
@@ -939,7 +973,24 @@ for WLAN in $(cat /var/lib/mesh_if); do
         continue
     fi
 
+    # If this is the 5 GHz mesh interface, prefer the configured mesh_5_channel.
+    if iface_supports_freq "$WLAN" 5180; then
+        desired_freq="$(wifi_5g_channel_to_freq "$MESH_5_CHANNEL")"
+        if [[ -n "$desired_freq" ]] && iface_supports_freq "$WLAN" "$desired_freq"; then
+            FREQ="$desired_freq"
+        else
+            echo " > WARNING: mesh_5_channel=$MESH_5_CHANNEL not supported by $WLAN; keeping default mesh freq (${FREQ} MHz)" >&2
+        fi
+    fi
+
     echo " > Setting SAE key/SSID for $WLAN (${FREQ} MHz) ..."
+
+    mesh_extra_wpa_lines=""
+    if [[ "$FREQ" -ge 5000 ]]; then
+        max_oper=$(mesh_wpa_max_oper_chwidth_for_5ghz)
+        mesh_extra_wpa_lines="    max_oper_chwidth=${max_oper}"
+        echo " > 5 GHz mesh ${WLAN}: mesh_5_bw=${MESH_5_BW} -> max_oper_chwidth=${max_oper}"
+    fi
 
 cat <<-EOF > /etc/wpa_supplicant/wpa_supplicant-$WLAN-lobby.conf
 ctrl_interface=/var/run/wpa_supplicant
@@ -955,6 +1006,7 @@ network={
     sae_password="$KEY"
     ieee80211w=2
     mesh_fwding=0
+${mesh_extra_wpa_lines}
 }
 EOF
 

@@ -15,6 +15,33 @@ WPA_CONF_2_4=""
 WPA_CONF_5_0=""
 LOBBY_FREQ_2_4=2412
 LOBBY_FREQ_5_0=5180
+
+mesh_conf_get() {
+    local key="$1"
+    local def="$2"
+    local v
+    v="$(grep -oP "^${key}=\\K.*" /etc/mesh.conf 2>/dev/null | head -1)"
+    echo "${v:-$def}"
+}
+
+wifi_5g_channel_to_freq() {
+    case "$1" in
+        36) echo 5180 ;;
+        40) echo 5200 ;;
+        44) echo 5220 ;;
+        48) echo 5240 ;;
+        149) echo 5745 ;;
+        153) echo 5765 ;;
+        157) echo 5785 ;;
+        161) echo 5805 ;;
+        165) echo 5825 ;;
+        *) echo "" ;;
+    esac
+}
+
+MESH_5_CHANNEL="$(mesh_conf_get mesh_5_channel 36)"
+MESH_5_FREQ="$(wifi_5g_channel_to_freq "$MESH_5_CHANNEL")"
+[[ -n "$MESH_5_FREQ" ]] && LOBBY_FREQ_5_0="$MESH_5_FREQ"
 ENCODER_PATH="/usr/local/bin/encoder.py"
 BATCTL_PATH="/usr/sbin/batctl"
 ELECTION_OUTPUT_FILE="/var/run/mesh_channel_election"
