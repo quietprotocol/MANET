@@ -1798,16 +1798,18 @@ if ! has_usb_morse_device && ! has_morse_netdev; then
     done
 fi
 
-# Onboard brcmfmac antenna path (CM4 SDIO WiFi): ant1 = PCB, ant2 = U.FL
+# Onboard brcmfmac antenna path (CM4 SDIO WiFi): enforce dtparam=ant1 only.
+# Remove any dtparam=ant* (ant1/ant2/…) so conflicting lines cannot coexist.
 if ls /sys/bus/sdio/drivers/brcmfmac/*/net 2>/dev/null | grep -q .; then
     for _cfg in /boot/firmware/config.txt /boot/config.txt; do
         [ -f "$_cfg" ] || continue
-        if grep -q '^dtparam=ant1$' "$_cfg"; then
-            continue
+        if grep -q '^dtparam=ant' "$_cfg"; then
+            sed -i '/^dtparam=ant/d' "$_cfg"
         fi
-        sed -i '/^dtparam=ant[12]$/d' "$_cfg"
-        echo "dtparam=ant1" >> "$_cfg"
-        echo " > Onboard PCB antenna (dtparam=ant1) set in $_cfg"
+        if ! grep -q '^dtparam=ant1$' "$_cfg"; then
+            echo "dtparam=ant1" >> "$_cfg"
+        fi
+        echo " > brcmfmac: dtparam=ant1 enforced in $_cfg"
     done
 fi
 
