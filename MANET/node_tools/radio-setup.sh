@@ -929,6 +929,8 @@ fi
 # 5 GHz mesh channel width (MHz). Matches wpa_supplicant max_oper_chwidth:
 # 40 -> 0 (CONF_OPER_CHWIDTH_USE_HT / VHT_CHANWIDTH_USE_HT, cap at HT40)
 # 80 -> 1 (80 MHz), 160 -> 2, 80+80 -> 3. See wpa_supplicant ssid_fields INT_RANGE.
+# Provisioning defaults: mesh_5_channel=36 mesh_5_bw=40 and lan_ap_channel=44 lan_ap_bw=40
+# (UNII-1 split so onboard 5 GHz AP and mt7915 mesh 5 GHz do not share spectrum).
 MESH_5_CHANNEL="${mesh_5_channel:-36}"
 MESH_5_BW="${mesh_5_bw:-80}"
 
@@ -1099,7 +1101,7 @@ EOF
     echo " > DHCP pool: $DHCP_START - $DHCP_END (${POOL_SIZE} IPs for ${MAX_EUDS} EUDs × ${MAX_NODES} nodes)"
 
     AP_CHANNEL="${lan_ap_channel:-11}"
-    AP_BW="${lan_ap_bw:-80}" # used for 5 GHz only (20/40/80). defaults to 80.
+    AP_BW="${lan_ap_bw:-80}" # 5 GHz only (20/40/80). Provisioned images use 40 with ch 44 AP / ch 36 mesh.
 
     # Decide AP band from channel. (1-14 => 2.4 GHz, >=36 => 5 GHz)
     # brcmfmac on CM4 supports 802.11ac (VHT) on 5 GHz.
@@ -1221,6 +1223,14 @@ EOF
         systemctl unmask hostapd.service
         echo " > Auto mode: AP services staged (manet-uplink-dispatch will manage)"
         systemctl disable hostapd.service
+    fi
+
+    # eud=auto leaves hostapd enabled at runtime if manet-uplink already started it;
+    # regenerating hostapd.conf without a restart leaves the AP on stale channel/BW.
+    if systemctl is-active --quiet hostapd.service 2>/dev/null; then
+        echo " > hostapd active: restarting to apply regenerated hostapd.conf"
+        systemctl restart hostapd.service 2>/dev/null || true
+        systemctl restart ap-txpower.service 2>/dev/null || true
     fi
 
     echo "AP configuration complete for $AP_INTERFACE"
@@ -1800,13 +1810,34 @@ fi
 
 # Onboard brcmfmac antenna path (CM4 SDIO WiFi): enforce dtparam=ant1 only.
 # Remove any dtparam=ant* (ant1/ant2/…) so conflicting lines cannot coexist.
+# Removal runs whenever config.txt exists: the old logic only ran sed when
+# grep matched ^dtparam=ant — lines with leading spaces or CRLF (\r) did not
+# match, so ant2 stayed; the sysfs guard can also miss early in boot.
+strip_boot_cfg_crlf() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    # GNU sed (Raspberry Pi OS): strip Windows CRLF so ^ anchors work on dtparam lines.
+    sed -i 's/\r$//' "$f"
+}
+
+remove_dtparam_ant_lines() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    strip_boot_cfg_crlf "$f"
+    sed -i \
+        -e '/^[[:space:]]*#[[:space:]]*dtparam=ant[[:digit:]]*[[:space:]]*$/d' \
+        -e '/^[[:space:]]*dtparam=ant[[:digit:]]*[[:space:]]*$/d' \
+        "$f"
+}
+
+for _cfg in /boot/firmware/config.txt /boot/config.txt; do
+    remove_dtparam_ant_lines "$_cfg"
+done
+
 if ls /sys/bus/sdio/drivers/brcmfmac/*/net 2>/dev/null | grep -q .; then
     for _cfg in /boot/firmware/config.txt /boot/config.txt; do
         [ -f "$_cfg" ] || continue
-        if grep -q '^dtparam=ant' "$_cfg"; then
-            sed -i '/^dtparam=ant/d' "$_cfg"
-        fi
-        if ! grep -q '^dtparam=ant1$' "$_cfg"; then
+        if ! grep -Eq '^[[:space:]]*dtparam=ant1[[:space:]]*$' "$_cfg"; then
             echo "dtparam=ant1" >> "$_cfg"
         fi
         echo " > brcmfmac: dtparam=ant1 enforced in $_cfg"
