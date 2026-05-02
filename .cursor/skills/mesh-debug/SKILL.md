@@ -13,7 +13,7 @@ description: >-
 
 ## Node Inventory
 
-Read `.cursor/mesh-nodes.env` for the current list of node IPs, SSH user, and password. Use these values for all SSH commands below.
+Read `.cursor/mesh-nodes.env` for mesh SSH inventory: `MESH_USER`, `MESH_PASSWORD`, and `NODE_IP`. If it is missing, copy `.cursor/mesh-nodes.env.example` to `.cursor/mesh-nodes.env` and edit. **This file is not shell** — do not assume it can be `source`d; treat it as plain text with keys and a `{ … }` block listing one IPv4 per line under `NODE_IP`. Use those values when building SSH commands; use one IP per session where a single host is required.
 
 ## Related documentation
 
@@ -22,6 +22,8 @@ For **host-side flashing**, **first-boot flow** (Raspberry Pi vs Rock 3A), **pro
 For **repository layout** and where provisioning sources of truth live, see `MANET/README.md`.
 
 ## SSH Access
+
+Substitute user, password, and one target IP from `.cursor/mesh-nodes.env`:
 
 ```bash
 sshpass -p '$MESH_PASSWORD' ssh -o StrictHostKeyChecking=no $MESH_USER@$NODE_IP
@@ -350,4 +352,4 @@ systemctl restart alfred              # reconnects gossip
 
 ## Parallel Multi-Node Check
 
-When checking multiple nodes, SSH into all of them in parallel (separate shell calls) to compare state side-by-side. Always check that both sides of a mesh link agree on SSID, channel, and SAE key.
+When checking multiple nodes, SSH into all of them in parallel (separate shell calls) to compare state side-by-side. Hosts are listed in `NODE_IP` in `.cursor/mesh-nodes.env`. Always check that both sides of a mesh link agree on SSID, channel, and SAE key.
