@@ -929,7 +929,7 @@ fi
 # 5 GHz mesh channel width (MHz). Matches wpa_supplicant max_oper_chwidth:
 # 40 -> 0 (CONF_OPER_CHWIDTH_USE_HT / VHT_CHANWIDTH_USE_HT, cap at HT40)
 # 80 -> 1 (80 MHz), 160 -> 2, 80+80 -> 3. See wpa_supplicant ssid_fields INT_RANGE.
-# Provisioning defaults: mesh_5_channel=36 mesh_5_bw=40 and lan_ap_channel=44 lan_ap_bw=40
+# Provisioning defaults: mesh_5_channel=36 mesh_5_bw=80 and lan_ap_channel=44 lan_ap_bw=40
 # (UNII-1 split so onboard 5 GHz AP and mt7915 mesh 5 GHz do not share spectrum).
 MESH_5_CHANNEL="${mesh_5_channel:-36}"
 MESH_5_BW="${mesh_5_bw:-80}"
@@ -1101,7 +1101,7 @@ EOF
     echo " > DHCP pool: $DHCP_START - $DHCP_END (${POOL_SIZE} IPs for ${MAX_EUDS} EUDs × ${MAX_NODES} nodes)"
 
     AP_CHANNEL="${lan_ap_channel:-11}"
-    AP_BW="${lan_ap_bw:-80}" # 5 GHz only (20/40/80). Provisioned images use 40 with ch 44 AP / ch 36 mesh.
+    AP_BW="${lan_ap_bw:-80}" # 5 GHz only (20/40/80). Provisioned images use ch 44 AP @ 40 MHz, ch 36 mesh @ 80 MHz.
 
     # Decide AP band from channel. (1-14 => 2.4 GHz, >=36 => 5 GHz)
     # brcmfmac on CM4 supports 802.11ac (VHT) on 5 GHz.
