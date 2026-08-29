@@ -4,7 +4,7 @@
 set -e
 
 # --- Configuration ---
-DEVICE_WAIT=4   # seconds to wait for USB to populate, for cm4 flashing
+DEVICE_WAIT="${DEVICE_WAIT:-30}"  # seconds to wait for USB to populate, for cm4 flashing
 TEMPLATE_FILE="firstrun.sh.template"  # these template files are the device setup scripts to be written/modified
 ROCK3A_TEMPLATE="rock3a-provision.sh.template"
 TEMP_SCRIPT_FILE=$(mktemp)
