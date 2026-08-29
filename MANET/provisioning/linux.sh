@@ -266,6 +266,33 @@ generate_password() {
         openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c "$length"
 }
 
+# CM4 HaLow bus: spi (Seeed MM6108 hat, stock otg_mode=1) or usb (MM8108,
+# DWC2 host on Waveshare USB-A). Overridable as HALOW_BUS=usb|spi. Non-CM4
+# flashes keep spi as a no-op placeholder so firstrun substitution always hits.
+ask_halow_bus() {
+        if [ "$HARDWARE_MODEL" != "cm4" ]; then
+                HALOW_BUS="${HALOW_BUS:-spi}"
+                return
+        fi
+        case "${HALOW_BUS:-}" in
+                usb|spi)
+                        echo "HaLow bus: $HALOW_BUS"
+                        return
+                        ;;
+        esac
+        echo ""
+        echo "CM4 HaLow is either a Seeed SPI hat (MM6108) or a USB MM8108."
+        echo "USB MM8108 on Waveshare USB-A needs DWC2 host instead of stock otg_mode=1."
+        echo "SPI hat nodes keep stock USB host (XHCI) so other USB devices stay on that path."
+        read -p "HaLow on USB MM8108? (y/N): " _halow_usb
+        if [ "$_halow_usb" = "y" ] || [ "$_halow_usb" = "Y" ]; then
+                HALOW_BUS="usb"
+        else
+                HALOW_BUS="spi"
+        fi
+        echo "HaLow bus: $HALOW_BUS"
+}
+
 # Detect SD card devices: mmcblk (native readers) + USB-attached disks (external card readers).
 # Excludes boot disk and eMMC internal storage.
 # Returns array of "/dev/NAME (size)" strings in SD_DEVICES global.
@@ -396,9 +423,11 @@ ask_questions() {
             echo "Please enter a valid 2-letter ISO country code (e.g., US, GB, DE, FR, JP)"
             echo "Common codes: US (United States), GB (UK), DE (Germany), FR (France), JP (Japan)"
             echo "              CA (Canada), AU (Australia), NZ (New Zealand), CN (China)"
-			echo "NOTE: EU is not a country code, use your actual country"
+            echo "NOTE: EU is not a country code, use your actual country"
         fi
     done
+
+        ask_halow_bus
 
         echo "The device will have a user called radio, for ssh access."
         read -p "Enter a password for the radio user [or press Enter to default to 'radio']: " RADIO_PW
@@ -495,6 +524,9 @@ RADIO_PW="$RADIO_PW"
 ADMIN_PW="$ADMIN_PW"
 AUTO_UPDATE="$AUTO_UPDATE"
 EOF
+                if [ "$HARDWARE_MODEL" = "cm4" ]; then
+                        echo "HALOW_BUS=\"$HALOW_BUS\"" >> "$CONFIG_FILE"
+                fi
 
                 echo "Configuration saved to $CONFIG_FILE"
         fi
@@ -510,6 +542,7 @@ load_config() {
         # Config files saved before voice existed have neither key. Default them
         # rather than substituting an empty string into mesh.conf.
         VOICE_ENABLED=${VOICE_ENABLED:-n}
+        HALOW_BUS=${HALOW_BUS:-}
 
         # Display the loaded settings
         echo "--- Loaded Configuration ---"
@@ -525,6 +558,7 @@ load_config() {
         echo "  Mesh PTT voice: $VOICE_ENABLED"
         echo "  Regulatory Domain: $REGULATORY_DOMAIN"
         echo "  HaLow Regulatory Region: $HALOW_REGULATORY_DOMAIN"
+        echo "  HaLow bus: ${HALOW_BUS:-}"
         echo "  Mesh SSID: $MESH_SSID"
         echo "  Mesh SAE Key: $MESH_SAE_KEY"
         echo "  LAN CIDR Block: $LAN_CIDR_BLOCK"
@@ -861,6 +895,7 @@ confirm_flash() {
         echo "  Size:   $device_size"
         echo ""
         echo "  Hardware: $HARDWARE_MODEL"
+        echo "  HaLow bus: ${HALOW_BUS:-spi}"
         echo "  Mesh SSID: $MESH_SSID"
         echo "  Network: $LAN_CIDR_BLOCK"
         echo ""
@@ -1010,6 +1045,7 @@ EOF
         sed -i "s|__HALOW_REGULATORY_DOMAIN__|${HALOW_REGULATORY_DOMAIN}|g" "$TEMP_PROVISION_SCRIPT"
         sed -i "s|__ADMIN_PW__|${ADMIN_PW}|g" "$TEMP_PROVISION_SCRIPT"
         sed -i "s|__AUTO_UPDATE__|${AUTO_UPDATE}|g" "$TEMP_PROVISION_SCRIPT"
+        sed -i "s|__HALOW_BUS__|${HALOW_BUS}|g" "$TEMP_PROVISION_SCRIPT"
 
         echo "Installing provisioning script to /usr/local/bin/provision-mesh.sh..."
         sudo cp "$TEMP_PROVISION_SCRIPT" "$ROOT_MOUNT/usr/local/bin/provision-mesh.sh"
@@ -1107,6 +1143,7 @@ flash_rpi() {
             -e "s|__HALOW_REGULATORY_DOMAIN__|${HALOW_REGULATORY_DOMAIN}|g" \
             -e "s|__ADMIN_PW__|${ADMIN_PW}|g" \
             -e "s|__AUTO_UPDATE__|${AUTO_UPDATE}|g" \
+            -e "s|__HALOW_BUS__|${HALOW_BUS}|g" \
             "$TEMPLATE_FILE" | tr -d '\r' > "$TEMP_SCRIPT_FILE"
 
         sudo rpi-imager --cli "$PI_OS_IMAGE_URL" "$target" --first-run-script "$TEMP_SCRIPT_FILE"
@@ -1120,6 +1157,47 @@ flash_rpi() {
         echo " SETTING ITSELF UP AND WILL REBOOT MULTIPLE TIMES"
         echo " Just leave it alone, this process takes about ten"
         echo " minutes"
+}
+
+# CM4 USB-A / USB MM8108 need DWC2 host. Stock Pi OS [cm4] sets otg_mode=1
+# (2711 XHCI). The [cm5] dwc2 line in the same file does not apply on CM4.
+# Only applied when the operator chose HaLow bus=usb at flash time.
+apply_cm4_dwc2_host() {
+        local disk="$1"
+        local part mnt cfg
+
+        if [[ "$disk" == *"mmcblk"* ]] || [[ "$disk" == *"nvme"* ]] || [[ "$disk" == *"loop"* ]]; then
+                part="${disk}p1"
+        else
+                part="${disk}1"
+        fi
+
+        mnt=$(mktemp -d)
+        sudo umount "$part" 2>/dev/null || true
+        if ! sudo mount "$part" "$mnt"; then
+                echo "WARNING: could not mount $part to set CM4 dwc2 USB host."
+                rmdir "$mnt"
+                return 0
+        fi
+
+        if [ -f "$mnt/config.txt" ]; then
+                cfg="$mnt/config.txt"
+        elif [ -f "$mnt/firmware/config.txt" ]; then
+                cfg="$mnt/firmware/config.txt"
+        fi
+
+        if [ -n "$cfg" ]; then
+                sudo sed -i 's/^otg_mode=1/#otg_mode=1/' "$cfg"
+                if ! sudo awk 'BEGIN{s=0} /^\[cm4\]/{s=1;next} /^\[/{s=0} s && /dtoverlay=dwc2,dr_mode=host/{f=1} END{exit !f}' "$cfg"; then
+                        sudo sed -i '/^#otg_mode=1/a dtoverlay=dwc2,dr_mode=host' "$cfg"
+                fi
+                echo "CM4 USB host set to dwc2 on $cfg"
+        else
+                echo "WARNING: config.txt not found on $part"
+        fi
+
+        sudo umount "$mnt"
+        rmdir "$mnt"
 }
 
 
@@ -1214,6 +1292,7 @@ else
         save_config
 fi
 
+ask_halow_bus
 
 # --- 3. Acquire image (Rock3A only — checksum verified here) ---
 if [ "$HARDWARE_MODEL" = "r3a" ]; then
@@ -1227,6 +1306,9 @@ if [ "$HARDWARE_MODEL" = "cm4" ]; then
         select_target_device
         confirm_flash "$TARGET_DEVICE"
         flash_rpi "$TARGET_DEVICE"
+        if [ "$HALOW_BUS" = "usb" ]; then
+                apply_cm4_dwc2_host "$TARGET_DEVICE"
+        fi
         rm -f "$TEMP_SCRIPT_FILE"
         exit 0
 fi

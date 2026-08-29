@@ -43,6 +43,8 @@ $Script:ADMIN_PW          = ""
 $Script:AUTO_UPDATE       = ""
 $Script:REGULATORY_DOMAIN = ""
 $Script:HALOW_REGULATORY_DOMAIN = ""
+$Script:HALOW_BUS         = ""
+$Script:IS_CM4            = $false
 $Script:RPI_IMAGER_PATH   = $null
 
 
@@ -397,6 +399,7 @@ function Select-HardwareAndTargetDevice {
     }
 
     if ($choice -eq "4") {
+        $Script:IS_CM4 = $true
         Write-Host ""
         Write-Host "NOTE: For CM4 on Windows, you must run rpiboot manually before continuing." -ForegroundColor Yellow
         Write-Host "Once rpiboot has mounted the eMMC, press Enter to continue."
@@ -459,6 +462,7 @@ function Confirm-Flash {
     Write-Host "  Size:   ${sizeGB}GB"
     Write-Host ""
     Write-Host "  Hardware:  $($Script:HARDWARE_MODEL)"
+    Write-Host "  HaLow bus: $($Script:HALOW_BUS)"
     Write-Host "  Mesh SSID: $($Script:MESH_SSID)"
     Write-Host "  Network:   $($Script:LAN_CIDR_BLOCK)"
     Write-Host ""
@@ -475,6 +479,24 @@ function Confirm-Flash {
 # ============================================================
 # Configuration Questions / Save / Load
 # ============================================================
+
+function Ensure-HalowBus {
+    if (-not $Script:IS_CM4) {
+        if ([string]::IsNullOrWhiteSpace($Script:HALOW_BUS)) { $Script:HALOW_BUS = "spi" }
+        return
+    }
+    if ($Script:HALOW_BUS -eq "usb" -or $Script:HALOW_BUS -eq "spi") {
+        Write-Host "HaLow bus: $($Script:HALOW_BUS)"
+        return
+    }
+    Write-Host ""
+    Write-Host "CM4 HaLow is either a Seeed SPI hat (MM6108) or a USB MM8108."
+    Write-Host "USB MM8108 on Waveshare USB-A needs DWC2 host instead of stock otg_mode=1."
+    Write-Host "SPI hat nodes keep stock USB host (XHCI) so other USB devices stay on that path."
+    $r = Read-Host "HaLow on USB MM8108? (y/N)"
+    $Script:HALOW_BUS = if ($r -match "^[Yy]") { "usb" } else { "spi" }
+    Write-Host "HaLow bus: $($Script:HALOW_BUS)"
+}
 
 function Ask-LanCidr {
     param([int]$maxEuds)
@@ -627,6 +649,8 @@ function Ask-Questions {
         }
     }
 
+    Ensure-HalowBus
+
     Write-Host "The device will have a user called 'radio' for SSH access."
     $pw = Read-Host "Enter a password for the radio user [or press Enter to default to 'radio']"
     Write-Host ""
@@ -705,6 +729,9 @@ RADIO_PW="$($Script:RADIO_PW)"
 ADMIN_PW="$($Script:ADMIN_PW)"
 AUTO_UPDATE="$($Script:AUTO_UPDATE)"
 "@
+    if ($Script:IS_CM4) {
+        $content += "HALOW_BUS=`"$($Script:HALOW_BUS)`"`n"
+    }
     [System.IO.File]::WriteAllText($CONFIG_FILE, $content.Replace("`r`n", "`n"))
     Write-Host "Configuration saved to $CONFIG_FILE"
 }
@@ -734,6 +761,7 @@ function Load-Config {
                 "RADIO_PW"                { $Script:RADIO_PW                  = $Matches[2] }
                 "ADMIN_PW"                { $Script:ADMIN_PW                  = $Matches[2] }
                 "AUTO_UPDATE"             { $Script:AUTO_UPDATE               = $Matches[2] }
+                "HALOW_BUS"               { $Script:HALOW_BUS                 = $Matches[2] }
             }
         }
     }
@@ -754,6 +782,7 @@ function Load-Config {
     Write-Host "  Mesh PTT voice: $($Script:VOICE_ENABLED)"
     Write-Host "  Regulatory Domain: $($Script:REGULATORY_DOMAIN)"
     Write-Host "  HaLow Regulatory Region: $($Script:HALOW_REGULATORY_DOMAIN)"
+    Write-Host "  HaLow bus: $($Script:HALOW_BUS)"
     Write-Host "  Mesh SSID: $($Script:MESH_SSID)"
     Write-Host "  Mesh SAE Key: $($Script:MESH_SAE_KEY)"
     Write-Host "  LAN CIDR Block: $($Script:LAN_CIDR_BLOCK)"
@@ -832,6 +861,8 @@ if ($configFiles.Count -gt 0) {
     Ask-Questions
     Save-Config
 }
+
+Ensure-HalowBus
 
 if ($Script:HARDWARE_MODEL -eq "r3a") {
     $imageOk = Get-ArmbianImage
@@ -1001,7 +1032,8 @@ auto_update=$($Script:AUTO_UPDATE)
             -replace '__REGULATORY_DOMAIN__',       $Script:REGULATORY_DOMAIN `
             -replace '__HALOW_REGULATORY_DOMAIN__', $Script:HALOW_REGULATORY_DOMAIN `
             -replace '__ADMIN_PW__',                $Script:ADMIN_PW `
-            -replace '__AUTO_UPDATE__',             $Script:AUTO_UPDATE
+            -replace '__AUTO_UPDATE__',             $Script:AUTO_UPDATE `
+            -replace '__HALOW_BUS__',               $Script:HALOW_BUS
 
         $provisionScript = $provisionScript.Replace("`r`n", "`n")
 
@@ -1171,7 +1203,8 @@ WantedBy=multi-user.target
         -replace '__REGULATORY_DOMAIN__',       $Script:REGULATORY_DOMAIN `
         -replace '__HALOW_REGULATORY_DOMAIN__', $Script:HALOW_REGULATORY_DOMAIN `
         -replace '__ADMIN_PW__',                $Script:ADMIN_PW `
-        -replace '__AUTO_UPDATE__',             $Script:AUTO_UPDATE
+        -replace '__AUTO_UPDATE__',             $Script:AUTO_UPDATE `
+        -replace '__HALOW_BUS__',               $Script:HALOW_BUS
 
     $flashCount = 0
     $keepFlashing = $true
