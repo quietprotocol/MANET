@@ -1715,11 +1715,35 @@ for _cfg in /boot/firmware/config.txt /boot/config.txt; do
 
     # CM4 only: PCIe WiFi cards (mt7916) need 32-bit DMA — the BCM2711 PCIe
     # outbound window is above 4GB which the card cannot address otherwise.
+    # USB MM8108 on Waveshare USB-A needs DWC2 host instead of stock otg_mode=1.
+    # SPI hat nodes keep XHCI. Old images with no halow_bus only switch if a
+    # USB Morse device is already visible (do not guess USB and break SPI).
     if grep -q 'Compute Module 4' /proc/device-tree/model 2>/dev/null; then
         if ! grep -q 'pcie-32bit-dma' "$_cfg"; then
             printf '\n[cm4]\ndtoverlay=pcie-32bit-dma\n' >> "$_cfg"
             echo " > pcie-32bit-dma added to $_cfg for CM4 PCIe WiFi"
             _config_txt_changed=1
+        fi
+        _want_cm4_dwc2=0
+        case "${halow_bus:-}" in
+            usb) _want_cm4_dwc2=1 ;;
+            spi) _want_cm4_dwc2=0 ;;
+            *)
+                if has_usb_morse_device; then
+                    _want_cm4_dwc2=1
+                fi
+                ;;
+        esac
+        if [ "$_want_cm4_dwc2" -eq 1 ]; then
+            if grep -q '^otg_mode=1' "$_cfg"; then
+                sed -i 's/^otg_mode=1/#otg_mode=1/' "$_cfg"
+                _config_txt_changed=1
+            fi
+            if ! awk 'BEGIN{s=0} /^\[cm4\]/{s=1;next} /^\[/{s=0} s && /dtoverlay=dwc2,dr_mode=host/{f=1} END{exit !f}' "$_cfg"; then
+                sed -i '/^#otg_mode=1/a dtoverlay=dwc2,dr_mode=host' "$_cfg"
+                echo " > CM4 USB host set to dwc2 (MM8108) in $_cfg"
+                _config_txt_changed=1
+            fi
         fi
     fi
 done

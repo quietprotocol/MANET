@@ -57,6 +57,22 @@ fi
 systemctl enable --now ssh
 echo "User setup complete - proceeding with provisioning..."
 
+# CM4 USB-A (and USB MM8108) sit on DWC2. Stock Trixie [cm4] sets otg_mode=1
+# (2711 XHCI); the MM8108 hub then comes up with empty ports. The [cm5]
+# dwc2 line in the same file does not apply on CM4. SPI hat nodes keep
+# otg_mode=1. Takes effect on the reboot at the end of provision-mesh,
+# before radio-setup looks for HaLow.
+if [ "__HALOW_BUS__" = "usb" ] && grep -q 'Compute Module 4' /proc/device-tree/model 2>/dev/null; then
+	for _cfg in /boot/firmware/config.txt /boot/config.txt; do
+		[ -f "$_cfg" ] || continue
+		sed -i 's/^otg_mode=1/#otg_mode=1/' "$_cfg"
+		if ! awk 'BEGIN{s=0} /^\[cm4\]/{s=1;next} /^\[/{s=0} s && /dtoverlay=dwc2,dr_mode=host/{f=1} END{exit !f}' "$_cfg"; then
+			sed -i '/^#otg_mode=1/a dtoverlay=dwc2,dr_mode=host' "$_cfg"
+		fi
+	done
+	echo " > CM4 USB host set to dwc2 (MM8108)"
+fi
+
 
 # Waiting for the network will hang boot, instead create a service to run after network is ready
 echo "Creating post-network provisioning service..."
@@ -814,6 +830,8 @@ echo "max_euds_per_node=__MAX_EUDS_PER_NODE__" >> /etc/mesh.conf
 # and management is unreachable.
 echo "admin_password=__ADMIN_PW__" >> /etc/mesh.conf
 echo "auto_update=__AUTO_UPDATE__" >> /etc/mesh.conf
+# usb = MM8108 (CM4 switches USB host to DWC2). spi = Seeed MM6108 hat.
+echo "halow_bus=__HALOW_BUS__" >> /etc/mesh.conf
 
 
 # Disable the current script so it won't run again at next boot
